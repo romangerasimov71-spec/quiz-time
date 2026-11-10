@@ -1,8 +1,9 @@
 /* «Поделиться результатом».
    Всё идёт через одну функцию QuizShare.share(result).
-   Сейчас (прототип, без SDK): системное «Поделиться» телефона (Web Share, с картинкой,
-   если браузер умеет), иначе — скачать картинку и скопировать текст со ссылкой.
-   Потом сюда встанет VK Bridge (VKWebAppShowWallPostBox) и ОК — см. пометку ниже.
+   Сейчас (прототип, без SDK): системное «Поделиться» телефона (Web Share с картинкой-файлом),
+   а если так нельзя — окно с самой картинкой (сохранить / скачать) и кнопкой
+   «Скопировать текст со ссылкой». Потом сюда встанет VK Bridge (VKWebAppShowWallPostBox)
+   и ОК — см. пометку в share().
 
    result = { test, score, total, rank: { title, text } } */
 window.QuizShare = (function () {
@@ -15,7 +16,7 @@ window.QuizShare = (function () {
 
   function shareText(result) {
     return 'Мой результат в тесте «' + result.test.title + '»: ' + result.score + ' из ' +
-      result.total + ' — «' + result.rank.title + '»! А ты сколько наберёшь?';
+      result.total + ' — «' + result.rank.title + '»! А ты сколько наберёшь? Пройди тест: ' + shareUrl(result);
   }
 
   function roundRect(ctx, x, y, w, h, r) {
@@ -117,10 +118,13 @@ window.QuizShare = (function () {
     return c;
   }
 
+  /* Картинка — JPEG: в 5–6 раз легче PNG, на вид то же самое. */
+  var CARD_TYPE = 'image/jpeg', CARD_EXT = 'jpg', CARD_QUALITY = 0.9;
+
   function cardBlob(result) {
     return new Promise(function (resolve) {
       var c = makeCard(result);
-      if (c.toBlob) c.toBlob(function (b) { resolve(b); }, 'image/png');
+      if (c.toBlob) c.toBlob(function (b) { resolve(b); }, CARD_TYPE, CARD_QUALITY);
       else resolve(null);
     });
   }
@@ -133,13 +137,18 @@ window.QuizShare = (function () {
     return prepared.blob;
   }
 
-  function download(blob, result) {
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = 'viktoriny-' + result.test.id + '-' + result.score + '.png';
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+  /* Разрешено ли странице (например, внутри чужого iframe) пользоваться функцией.
+     Если не спросить заранее, браузер пишет ошибку в консоль. */
+  function policyAllows(feature) {
+    try {
+      var p = document.permissionsPolicy || document.featurePolicy;
+      if (p && typeof p.allowsFeature === 'function') {
+        // Браузер не знает такой функции (например, нет web-share на компьютере) — решает сам вызов
+        if (typeof p.features === 'function' && p.features().indexOf(feature) === -1) return true;
+        return p.allowsFeature(feature);
+      }
+    } catch (e) { /* ничего */ }
+    return true;
   }
 
   function copyText(text) {
@@ -147,63 +156,131 @@ window.QuizShare = (function () {
       try {
         var ta = document.createElement('textarea');
         ta.value = text; ta.setAttribute('readonly', '');
-        ta.style.position = 'fixed'; ta.style.opacity = '0';
+        ta.style.position = 'fixed'; ta.style.top = '0'; ta.style.opacity = '0';
         document.body.appendChild(ta); ta.select();
         var ok = document.execCommand('copy');
         ta.remove();
-        return ok;
+        return !!ok;
       } catch (e) { return false; }
     }
     try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
+      if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext !== false && policyAllows('clipboard-write')) {
         return navigator.clipboard.writeText(text).then(function () { return true; }, legacy);
       }
     } catch (e) { /* ничего */ }
     return Promise.resolve(legacy());
   }
 
+  function isTouchDevice() {
+    try { return window.matchMedia('(hover: none) and (pointer: coarse)').matches; } catch (e) { return false; }
+  }
+
+  function canShareFile(file) {
+    if (!file || !navigator.share || !navigator.canShare || !policyAllows('web-share')) return false;
+    try { return navigator.canShare({ files: [file] }); } catch (e) { return false; }
+  }
+  function canShareText() { return !!navigator.share && policyAllows('web-share'); }
+
+  /* ---------- окно с картинкой (если системное «Поделиться» с файлом недоступно) ---------- */
+  var dialog = null;
+
+  function closeDialog() {
+    if (!dialog) return;
+    var d = dialog; dialog = null;
+    document.removeEventListener('keydown', d.onKey, true);
+    d.el.remove();
+    setTimeout(function () { URL.revokeObjectURL(d.url); }, 1000);
+    if (d.returnFocus && d.returnFocus.isConnected) { try { d.returnFocus.focus({ preventScroll: true }); } catch (e) { /* ничего */ } }
+  }
+
+  function el(tag, attrs, kids) {
+    var e = document.createElement(tag);
+    for (var k in (attrs || {})) {
+      if (k === 'text') e.textContent = attrs[k];
+      else if (k === 'class') e.className = attrs[k];
+      else if (k.slice(0, 2) === 'on') e.addEventListener(k.slice(2), attrs[k]);
+      else e.setAttribute(k, attrs[k]);
+    }
+    (kids || []).forEach(function (c) { if (c) e.appendChild(c); });
+    return e;
+  }
+
+  function openDialog(blob, result, fullText, toast) {
+    closeDialog();
+    var url = URL.createObjectURL(blob);
+    var touch = isTouchDevice();
+    var textEl = el('p', { class: 'share-dialog__text', text: fullText });
+    var copyBtn = el('button', { class: 'btn btn--ghost', type: 'button', 'data-action': 'copy', text: '📋 Скопировать текст со ссылкой',
+      onclick: function () {
+        copyText(fullText).then(function (ok) {
+          if (ok) toast('Текст со ссылкой скопирован — вставьте его в сообщение другу.');
+          else {
+            toast('Не получилось скопировать. Выделите текст над кнопкой и скопируйте вручную.');
+            try { var r = document.createRange(); r.selectNodeContents(textEl); var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); } catch (e) { /* ничего */ }
+          }
+        });
+      } });
+    var sendBtn = canShareText() ? el('button', { class: 'btn btn--ghost', type: 'button', 'data-action': 'send-link', text: '📤 Отправить ссылку',
+      onclick: function () {
+        try { navigator.share({ title: 'Викторины', text: fullText }).then(null, function () { /* передумал — ничего */ }); } catch (e) { /* ничего */ }
+      } }) : null;
+    var download = touch ? null : el('a', { class: 'btn btn--primary', href: url, download: 'viktoriny-' + result.test.id + '-' + result.score + '.' + CARD_EXT,
+      'data-action': 'download', text: '⬇ Скачать картинку' });
+    var closeBtn = el('button', { class: 'share-dialog__close', type: 'button', 'data-action': 'close', 'aria-label': 'Закрыть', text: '✕', onclick: closeDialog });
+
+    var box = el('div', { class: 'share-dialog__box', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Поделиться результатом' }, [
+      closeBtn,
+      el('h2', { class: 'share-dialog__title', text: 'Ваша картинка с результатом' }),
+      el('img', { class: 'share-dialog__img', src: url, alt: 'Тест «' + result.test.title + '»: ' + result.score + ' из ' + result.total + ' — «' + result.rank.title + '»' }),
+      touch ? el('p', { class: 'share-dialog__hint', text: 'Нажмите на картинку и подержите палец — телефон предложит сохранить её или отправить.' }) : null,
+      download,
+      el('p', { class: 'share-dialog__label', text: 'Текст для друзей:' }),
+      textEl,
+      copyBtn,
+      sendBtn
+    ]);
+    var wrap = el('div', { class: 'share-dialog', 'data-share-dialog': '', onclick: function (e) { if (e.target === wrap) closeDialog(); } }, [box]);
+    var onKey = function (e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeDialog(); } };
+    document.addEventListener('keydown', onKey, true);
+    dialog = { el: wrap, url: url, onKey: onKey, returnFocus: document.activeElement };
+    document.body.appendChild(wrap);
+    try { (download || copyBtn).focus({ preventScroll: true }); } catch (e) { /* ничего */ }
+  }
+
   /* Главная функция. Возвращает Promise с одним из:
-     'shared' — отправлено через «Поделиться», 'cancelled' — человек передумал,
-     'saved+copied' / 'saved' — картинка скачана (и текст скопирован). */
-  function share(result) {
-    var text = shareText(result);
-    var url = shareUrl(result);
+     'shared' — отправлено через системное «Поделиться», 'cancelled' — человек передумал,
+     'dialog' — открыто окно с картинкой и текстом. opts.toast(text) — показать подсказку. */
+  function share(result, opts) {
+    var toast = (opts && opts.toast) || function () {};
+    var fullText = shareText(result);
     var blobPromise = (prepared && prepared.result === result) ? prepared.blob : cardBlob(result);
 
     // === Здесь потом: ВК — VKWebAppShowWallPostBox, ОК — FAPI.UI.postMediatopic ===
 
     return blobPromise.then(function (blob) {
       var file = null;
-      try { if (blob) file = new File([blob], 'viktoriny-result.png', { type: 'image/png' }); } catch (e) { file = null; }
+      try { if (blob) file = new File([blob], 'viktoriny-result.' + CARD_EXT, { type: CARD_TYPE }); } catch (e) { file = null; }
 
-      var tryShare = null;
-      if (file && navigator.canShare && navigator.share) {
-        try { if (navigator.canShare({ files: [file] })) tryShare = { files: [file], title: 'Викторины', text: text + ' ' + url }; } catch (e) { /* ничего */ }
-      }
-      if (!tryShare && navigator.share && isTouchDevice()) {
-        tryShare = { title: 'Викторины', text: text, url: url };
-      }
-
-      if (tryShare) {
-        return navigator.share(tryShare).then(function () { return 'shared'; }, function (err) {
+      if (canShareFile(file)) {
+        return navigator.share({ files: [file], title: 'Викторины', text: fullText }).then(function () { return 'shared'; }, function (err) {
           if (err && err.name === 'AbortError') return 'cancelled';
-          return fallback(blob, text + ' ' + url, result);
+          openDialog(blob, result, fullText, toast);
+          return 'dialog';
         });
       }
-      return fallback(blob, text + ' ' + url, result);
+      if (!blob) { // совсем старый браузер: хотя бы текст
+        return copyText(fullText).then(function (ok) {
+          toast(ok ? 'Текст со ссылкой скопирован — вставьте его в сообщение другу.' : 'Не получилось поделиться на этом устройстве.');
+          return 'text';
+        });
+      }
+      openDialog(blob, result, fullText, toast);
+      return 'dialog';
     });
   }
 
-  function fallback(blob, fullText, result) {
-    if (blob) download(blob, result);
-    return copyText(fullText).then(function (ok) {
-      return blob ? (ok ? 'saved+copied' : 'saved') : (ok ? 'copied' : 'failed');
-    });
-  }
-
-  function isTouchDevice() {
-    try { return window.matchMedia('(pointer: coarse)').matches; } catch (e) { return false; }
-  }
-
-  return { share: share, prepare: prepare, makeCard: makeCard, shareText: shareText, shareUrl: shareUrl, APP_URL: APP_URL };
+  return {
+    share: share, prepare: prepare, makeCard: makeCard, shareText: shareText, shareUrl: shareUrl,
+    closeDialog: closeDialog, isDialogOpen: function () { return !!dialog; }, APP_URL: APP_URL
+  };
 })();

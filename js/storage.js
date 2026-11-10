@@ -14,9 +14,14 @@ window.QuizStore = (function () {
     memory[key] = String(value);
     try { window.localStorage.setItem(PREFIX + key, String(value)); } catch (e) { /* ничего */ }
   }
-  function getBest(testId) {
-    var v = parseInt(get('best:' + testId), 10);
-    return isNaN(v) ? null : v;
+  /* Лучший результат: только целое число от 0 до max. Испорченное значение
+     (например «99» при 10 вопросах) не показываем, как будто теста не было. */
+  function getBest(testId, max) {
+    var raw = get('best:' + testId);
+    if (raw == null || !/^\d+$/.test(String(raw).trim())) return null;
+    var v = parseInt(raw, 10);
+    if (v < 0 || (max != null && v > max)) return null;
+    return v;
   }
   function setBest(testId, score) { set('best:' + testId, score); }
   return { get: get, set: set, getBest: getBest, setBest: setBest };

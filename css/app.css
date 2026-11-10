@@ -6,11 +6,13 @@
   --ink-soft: #6d5a48;
   --card: #fffaf2;
   --line: #ecd9bf;
-  --ok: #2e8b3e;
+  --ok: #2a7a30;       /* белый текст на нём 5,4:1 */
+  --ok-ink: #1e6a2b;   /* зелёный текст на светлом 5,9:1 */
   --ok-bg: #e5f5e2;
-  --bad: #d93a2f;
+  --bad: #c62828;      /* белый текст на нём 5,6:1 */
+  --bad-ink: #b3261e;
   --bad-bg: #fde6e2;
-  --accent: #d84315;
+  --accent: #bf360c;   /* белый текст на нём 5,6:1 */
   --radius: 20px;
   --font: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --emoji: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
@@ -60,7 +62,7 @@ button:disabled { cursor: default; }
 }
 .sound-btn { font-family: var(--emoji); }
 .back-btn { font-size: 20px; font-weight: 700; color: var(--ink); }
-.back-btn--light, .sound-btn--light { background: rgba(255, 255, 255, 0.25); color: #fff; box-shadow: none; }
+.back-btn--light, .sound-btn--light { background: rgba(0, 0, 0, 0.22); color: #fff; box-shadow: none; }
 
 .btn {
   display: flex;
@@ -82,6 +84,7 @@ button:disabled { cursor: default; }
 .btn--primary:hover { filter: brightness(1.06); }
 .btn--primary:disabled { filter: saturate(0.6) brightness(0.95); }
 .btn--ghost { background: #fff; color: var(--ink); border: 3px solid var(--line); }
+.btn--ghost:disabled { opacity: 0.55; }
 .btn--light { background: rgba(255, 255, 255, 0.95); color: var(--ink); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.12); }
 
 /* ---------- главный экран ---------- */
@@ -95,7 +98,7 @@ button:disabled { cursor: default; }
   flex: none;
   width: 60px; height: 60px;
   border-radius: 18px;
-  background: linear-gradient(135deg, #ff7043, #d84315);
+  background: linear-gradient(135deg, #e0561f, #bf360c);
   color: #fff;
   font-size: 40px;
   font-weight: 900;
@@ -132,7 +135,7 @@ button:disabled { cursor: default; }
   right: -30px; top: -30px;
   width: 120px; height: 120px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.13);
+  background: rgba(0, 0, 0, 0.07);
   pointer-events: none;
 }
 .test-card:active { transform: translateY(3px); }
@@ -216,9 +219,10 @@ button:disabled { cursor: default; }
 .answers--emoji { grid-template-columns: 1fr 1fr; }
 .answer--emoji { justify-content: center; min-height: 96px; text-align: center; }
 .answer--emoji .answer__text { font-size: 50px; line-height: 1; font-family: var(--emoji); font-weight: 800; }
-.answer.is-correct { background: var(--ok); border-color: var(--ok); color: #fff; box-shadow: 0 4px 0 #1e6a2b; }
-.answer.is-wrong { background: var(--bad); border-color: var(--bad); color: #fff; box-shadow: 0 4px 0 #9c2219; }
-.answer.is-dim { opacity: 0.5; }
+.answer.is-correct { background: var(--ok); border-color: var(--ok); color: #fff; box-shadow: 0 4px 0 #1b5420; }
+.answer.is-wrong { background: var(--bad); border-color: var(--bad); color: #fff; box-shadow: 0 4px 0 #8e1c1c; }
+.answer.is-dim { color: var(--ink-soft); background: #fbf3e6; box-shadow: 0 4px 0 #f1e4d0; } /* 6:1 — читается, но видно, что не выбран */
+.answer--emoji.is-dim .answer__text { opacity: 0.55; }
 .answer.is-correct::after, .answer.is-wrong::after {
   position: absolute;
   right: 12px; top: 50%;
@@ -241,8 +245,8 @@ button:disabled { cursor: default; }
 .feedback--ok { border-color: #b9dfb4; background: var(--ok-bg); }
 .feedback--bad { border-color: #f4bfb7; background: var(--bad-bg); }
 .feedback__verdict { font-size: 24px; font-weight: 900; }
-.feedback--ok .feedback__verdict { color: var(--ok); }
-.feedback--bad .feedback__verdict { color: var(--bad); }
+.feedback--ok .feedback__verdict { color: var(--ok-ink); }
+.feedback--bad .feedback__verdict { color: var(--bad-ink); }
 .feedback__right { margin-top: 4px; font-size: 20px; font-weight: 700; }
 .feedback__label { margin-top: 8px; font-size: 18px; color: var(--ink-soft); font-weight: 700; }
 .feedback__fact { margin-top: 8px; font-size: 20px; line-height: 1.4; }
@@ -298,7 +302,7 @@ button:disabled { cursor: default; }
 .memorize .btn { max-width: 420px; margin: 0 auto; }
 
 /* ---------- результат ---------- */
-body.on-result { background: linear-gradient(160deg, var(--c1), var(--c2)) fixed; }
+body.on-result, body.on-intro { background: linear-gradient(160deg, var(--c1), var(--c2)) fixed; }
 .result { display: flex; flex-direction: column; }
 .result__top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .result__card {
@@ -309,8 +313,8 @@ body.on-result { background: linear-gradient(160deg, var(--c1), var(--c2)) fixed
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
 }
 .result__card p { margin: 0; }
-.result__emoji { font-family: var(--emoji); font-size: 64px; line-height: 1.1; }
-.result__test { margin-top: 6px !important; font-size: 21px; font-weight: 700; color: var(--ink-soft); }
+.result__emoji { font-family: var(--emoji); font-size: 1.3em; vertical-align: -0.15em; }
+.result__test { font-size: 21px; font-weight: 700; color: var(--ink-soft); }
 .result__score { margin-top: 4px !important; font-size: 36px; font-weight: 800; color: var(--c1); line-height: 1.1; }
 .result__num { font-size: 92px; font-weight: 900; letter-spacing: -2px; }
 .result__rank {
@@ -326,10 +330,67 @@ body.on-result { background: linear-gradient(160deg, var(--c1), var(--c2)) fixed
 }
 .result__text { margin-top: 12px !important; font-size: 21px; line-height: 1.4; }
 .result__best { margin-top: 12px !important; font-size: 19px; font-weight: 700; color: var(--ink-soft); }
-.result__best--new { color: var(--ok); }
+.result__best--new { color: var(--ok-ink); }
 .result__actions { display: grid; gap: 12px; margin-top: 18px; }
 .result .btn--primary { background: #fff; color: var(--c1); box-shadow: 0 6px 0 rgba(0, 0, 0, 0.2); font-size: 22px; min-height: 70px; padding-left: 12px; padding-right: 12px; }
-.result .btn--light { background: rgba(255, 255, 255, 0.22); color: #fff; box-shadow: none; border: 3px solid rgba(255, 255, 255, 0.6); }
+.result .btn--light, .intro .btn--light { background: rgba(0, 0, 0, 0.22); color: #fff; box-shadow: none; border: 3px solid rgba(255, 255, 255, 0.75); min-height: 58px; }
+
+/* ---------- заставка теста ---------- */
+.intro { display: flex; flex-direction: column; }
+.intro__card {
+  background: var(--card);
+  border-radius: 28px;
+  padding: 26px 20px 22px;
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+}
+.intro__emoji {
+  width: 112px; height: 112px;
+  margin: 0 auto 10px;
+  border-radius: 30px;
+  background: var(--bg2);
+  display: grid; place-items: center;
+  font-family: var(--emoji);
+  font-size: 68px;
+}
+.intro__title { margin: 0; font-size: 32px; line-height: 1.15; font-weight: 900; color: var(--c1); }
+.intro__count { margin: 6px 0 0; font-size: 20px; font-weight: 700; color: var(--ink-soft); }
+.intro__text { margin: 14px 0 0; font-size: 21px; line-height: 1.4; }
+.intro__best { margin: 12px 0 0; font-size: 19px; font-weight: 700; color: var(--ink-soft); }
+.btn--start { margin-top: 22px; min-height: 72px; font-size: 26px; background: var(--c1); }
+
+/* ---------- окно «Поделиться» (если системное недоступно) ---------- */
+.share-dialog {
+  position: fixed; inset: 0;
+  z-index: 20;
+  background: rgba(30, 20, 10, 0.6);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+  overflow-y: auto;
+}
+.share-dialog__box {
+  position: relative;
+  width: 100%; max-width: 480px;
+  margin: auto 0;
+  background: var(--card);
+  border-radius: 24px;
+  padding: 18px 16px 16px;
+  display: grid; gap: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+}
+.share-dialog__title { margin: 0 44px 0 0; font-size: 22px; line-height: 1.2; font-weight: 900; }
+.share-dialog__img { display: block; width: 100%; max-width: 360px; height: auto; margin: 0 auto; border-radius: 16px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); -webkit-touch-callout: default; user-select: auto; }
+.share-dialog__hint { margin: 0; padding: 10px 12px; border-radius: 14px; background: var(--bg2); font-size: 19px; font-weight: 700; text-align: center; }
+.share-dialog__label { margin: 4px 0 -6px; font-size: 17px; font-weight: 700; color: var(--ink-soft); }
+.share-dialog__text { margin: 0; padding: 10px 12px; border: 2px dashed var(--line); border-radius: 14px; font-size: 18px; line-height: 1.4; overflow-wrap: anywhere; user-select: text; }
+.share-dialog .btn { min-height: 58px; font-size: 20px; text-decoration: none; }
+.share-dialog__close {
+  position: absolute; top: 10px; right: 10px;
+  width: 48px; height: 48px;
+  border: 0; border-radius: 14px;
+  background: var(--bg2);
+  font-size: 24px; font-weight: 900; line-height: 1;
+}
 
 /* ---------- всплывающая подсказка ---------- */
 .toast {
@@ -349,7 +410,7 @@ body.on-result { background: linear-gradient(160deg, var(--c1), var(--c2)) fixed
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
   opacity: 0;
   transition: opacity .25s ease, transform .25s ease;
-  z-index: 10;
+  z-index: 30;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
@@ -376,7 +437,7 @@ body.on-result { background: linear-gradient(160deg, var(--c1), var(--c2)) fixed
 @media (min-width: 900px) {
   #app { max-width: 860px; padding-top: 28px; }
   .cards { grid-template-columns: 1fr 1fr; }
-  .quiz, .result { max-width: 600px; margin: 0 auto; }
+  .quiz, .result, .intro { max-width: 600px; margin: 0 auto; }
 }
 
 /* ---------- телефон в альбоме (низкий экран) ---------- */
@@ -404,10 +465,54 @@ body.on-result { background: linear-gradient(160deg, var(--c1), var(--c2)) fixed
   .result__top { grid-column: 1 / -1; }
   .result__actions { margin-top: 0; }
   .result__card { padding: 14px 14px 16px; }
+  .intro { display: grid; grid-template-columns: 1fr; }
+  .intro__card { display: grid; grid-template-columns: auto 1fr; gap: 0 18px; text-align: left; align-items: center; padding: 16px 18px; }
+  .intro__emoji { grid-row: span 4; width: 96px; height: 96px; font-size: 58px; margin: 0; }
+  .intro__title { font-size: 26px; }
+  .intro__text { margin-top: 6px; font-size: 19px; }
+  .btn--start { grid-column: 1 / -1; margin-top: 14px; min-height: 60px; }
   .result__num { font-size: 64px; }
-  .result__emoji { font-size: 40px; }
   .result__rank { font-size: 22px; margin-top: 6px !important; }
   .result__text { font-size: 19px; margin-top: 8px !important; }
+}
+
+/* ---------- очень узкие экраны (старые телефоны, ≤ 340px) ---------- */
+@media (max-width: 340px) {
+  #app { padding-left: 10px; padding-right: 10px; }
+  .home__head { gap: 10px; }
+  .home__logo { width: 44px; height: 44px; font-size: 28px; border-radius: 14px; }
+  .home__title { font-size: 26px; }
+  .home__sub { font-size: 17px; }
+  .icon-btn { min-width: 46px; min-height: 46px; padding: 4px 8px; font-size: 20px; }
+  .back-btn { font-size: 17px; }
+  .topbar__count { font-size: 17px; }
+  .test-card { gap: 10px; padding: 12px; }
+  .test-card__emoji { width: 52px; height: 52px; font-size: 32px; border-radius: 14px; }
+  .test-card__title { font-size: 22px; }
+  .test-card__sub { font-size: 16px; }
+  .chip { font-size: 15px; padding: 2px 8px; }
+  .answer { padding: 10px 12px; font-size: 20px; }
+  .question { font-size: 22px; }
+  .result__num { font-size: 72px; }
+  .result__rank { font-size: 22px; }
+  .btn { font-size: 20px; padding-left: 10px; padding-right: 10px; }
+  .result .btn--primary { font-size: 19px; }
+}
+
+/* ---------- невысокие телефоны (360×640): «Поделиться» видно без прокрутки ---------- */
+@media (max-height: 700px) and (orientation: portrait) {
+  .result__top { margin-bottom: 8px; }
+  .result__card { padding: 14px 14px 14px; border-radius: 24px; }
+  .result__num { font-size: 72px; }
+  .result__score { font-size: 30px; }
+  .result__rank { font-size: 22px; margin-top: 6px !important; padding: 6px 14px; }
+  .result__text { font-size: 19px; margin-top: 8px !important; line-height: 1.3; }
+  .result__best { font-size: 17px; margin-top: 6px !important; }
+  .result__actions { margin-top: 12px; gap: 10px; }
+  .result .btn--primary { min-height: 60px; }
+  .result .btn--light { min-height: 52px; font-size: 20px; }
+  .intro__emoji { width: 84px; height: 84px; font-size: 50px; }
+  .intro__card { padding: 18px 16px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

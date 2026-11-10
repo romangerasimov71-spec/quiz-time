@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Викторины — проверь себя!</title>
+<meta name="description" content="Весёлые викторины: СССР, кино, Новый год, природа и тест на память. 10 вопросов, звание по результату — поделитесь с друзьями!">
+<meta name="theme-color" content="#d84315">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Викторины — проверь себя!">
+<meta property="og:description" content="10 вопросов, звание по результату. А вы сколько наберёте?">
+<meta property="og:url" content="https://romangerasimov71-spec.github.io/quiz-time/">
+<meta property="og:locale" content="ru_RU">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23d84315'/%3E%3Ctext x='32' y='47' font-size='42' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold'%3E%3F%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app" aria-live="polite"></div>
+<div id="toast" class="toast" role="status" hidden></div>
+<noscript><p class="noscript">Чтобы пройти викторину, включите JavaScript в браузере.</p></noscript>
+
+<!-- Тесты: каждый — свой файл. Новый тест = новый файл в tests/ + одна строка здесь. -->
+<script src="tests/ussr.js"></script>
+<script src="tests/kino.js"></script>
+<script src="tests/newyear.js"></script>
+<script src="tests/memory.js"></script>
+<script src="tests/nature.js"></script>
+
+<!-- Движок -->
+<script src="js/storage.js"></script>
+<script src="js/sound.js"></script>
+<script src="js/share.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

@@ -55,7 +55,8 @@
   function clearTimers() { timers.forEach(clearTimeout); timers = []; }
   function later(fn, ms) { timers.push(setTimeout(fn, ms)); }
 
-  var EMOJI_RE = /^(?:\p{Extended_Pictographic}|\p{Emoji_Component})+$/u;
+  // Только картинки-эмодзи (цифры сюда не входят — они рисуются обычным шрифтом)
+  var EMOJI_RE = /^(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D|\p{Emoji_Modifier})*)+$/u;
   function isEmojiOnly(s) { try { return EMOJI_RE.test(String(s).replace(/\s/g, '')); } catch (e) { return false; } }
 
   function rankFor(test, score) {
@@ -291,7 +292,8 @@
 
   function memoryGrid(q, small) {
     var cols = q.cols || Math.min(q.show.length, 4);
-    return h('div', { class: 'mem-grid' + (small ? ' mem-grid--small' : ''), style: '--cols:' + cols }, q.show.map(function (it) {
+    var rows = Math.ceil(q.show.length / cols);
+    return h('div', { class: 'mem-grid' + (small ? ' mem-grid--small' : ''), style: '--cols:' + cols + ';--rows:' + rows }, q.show.map(function (it) {
       if (it === '' || it == null) return h('div', { class: 'mem-cell mem-cell--empty' });
       if (typeof it === 'object' && it.color) {
         return h('div', { class: 'mem-cell' }, [h('span', { class: 'mem-dot', style: 'background:' + it.color })]);
@@ -343,10 +345,13 @@
     var order = shuffle(answers);
     state.order = order;
     var emojiAnswers = order.every(function (a) { return isEmojiOnly(a.text); });
+    var numAnswers = !emojiAnswers && order.every(function (a) { return /^\d{1,3}$/.test(a.text); });
+    var tiles = emojiAnswers || numAnswers;
 
     var buttons = order.map(function (a, i) {
       return h('button', {
-        class: 'answer' + (emojiAnswers ? ' answer--emoji' : ''), type: 'button', 'data-index': String(i),
+        class: 'answer' + (tiles ? ' answer--tile' : '') + (emojiAnswers ? ' answer--emoji' : '') + (numAnswers ? ' answer--num' : ''),
+        type: 'button', 'data-index': String(i),
         onclick: function () { choose(i); }
       }, [
         h('span', { class: 'answer__key', 'aria-hidden': 'true', text: String(i + 1) }),
@@ -358,7 +363,7 @@
       topBar(),
       h('section', { class: 'ask' }, [
         h('h2', { class: 'question', text: q.q }),
-        h('div', { class: 'answers' + (emojiAnswers ? ' answers--emoji' : '') }, buttons),
+        h('div', { class: 'answers' + (tiles ? ' answers--tiles' : '') }, buttons),
         h('div', { class: 'feedback', hidden: true })
       ])
     ]), 'question');

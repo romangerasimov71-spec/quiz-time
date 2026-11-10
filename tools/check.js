@@ -5,7 +5,7 @@
      node tools/check.js                 — все проверки
      node tools/check.js --shots /путь   — плюс скриншоты всех экранов в эту папку
      node tools/check.js --only memory   — только один тест (по id) на основных экранах
-     node tools/check.js --extra-only    — только блок «Дополнительно» (быстро, ~2 мин)
+     node tools/check.js --extra-only    — только блок «Дополнительно» (быстрее, ~3 мин)
 
    Что делает:
    - поднимает маленький локальный сервер с папкой репозитория;
@@ -134,6 +134,55 @@ async function noHorizontalScroll(page, where) {
   check(r.sw <= r.w + 1, where, `горизонтальная прокрутка: ширина страницы ${r.sw} > экрана ${r.w}`);
 }
 
+/* Контраст всего текста на экране (WCAG, нужно ≥ 4,5:1).
+   Фон ищем вверх по родителям: полупрозрачные слои накладываем на первый сплошной цвет
+   или на все цвета градиента (берём худший). Прозрачность элементов тоже учитываем.
+   Пропускаем только эмодзи и неактивную «Готово» в первые 1,5 с. */
+async function auditContrast(page, where, min = 4.5) {
+  const bad = await page.evaluate((MIN) => {
+    const parse = (s) => { const m = s && s.match(/rgba?\(([^)]+)\)/); if (!m) return null; const p = m[1].split(',').map(parseFloat); return { c: p.slice(0, 3), a: p.length > 3 ? p[3] : 1 }; };
+    const stops = (s) => (s.match(/rgba?\([^)]+\)/g) || []).map(parse);
+    const lum = (c) => { const v = c.map((x) => x / 255).map((x) => (x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4))); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
+    const cr = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+    const blend = (t, a, u) => t.map((v, i) => v * a + u[i] * (1 - a));
+    const EMOJI = /^[\p{Extended_Pictographic}\uFE0F\u200D\s]+$/u;
+    function backgrounds(el) {
+      const layers = []; let base = null;
+      for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+        const cs = getComputedStyle(n);
+        if (/gradient/.test(cs.backgroundImage)) {
+          const st = stops(cs.backgroundImage);
+          if (st.length && st.every((x) => x.a >= 1)) { base = st.map((x) => x.c); break; }
+        }
+        const bc = parse(cs.backgroundColor);
+        if (bc && bc.a >= 1) { base = [bc.c]; break; }
+        if (bc && bc.a > 0) layers.push(bc);
+      }
+      let c = base || [[255, 255, 255]];
+      for (let i = layers.length - 1; i >= 0; i--) c = c.map((x) => blend(layers[i].c, layers[i].a, x));
+      return c;
+    }
+    const out = [];
+    const root = document.getElementById('app');
+    for (const el of root.querySelectorAll('*')) {
+      const own = [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('').trim();
+      if (!own || EMOJI.test(own)) continue;
+      if (el.closest('.mem-cell') || el.closest('[data-action="ready"]:disabled')) continue;
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      if (!r.width || !r.height || cs.visibility === 'hidden') continue;
+      let op = 1; for (let n = el; n && n.nodeType === 1; n = n.parentElement) op *= parseFloat(getComputedStyle(n).opacity);
+      if (op === 0) continue;
+      const tc = parse(cs.color);
+      let worst = 99;
+      for (const bg of backgrounds(el)) worst = Math.min(worst, cr(blend(tc.c, tc.a * op, bg), bg));
+      if (worst < MIN) out.push(`«${own.slice(0, 30)}» ${worst.toFixed(2)}:1 (${el.className || el.tagName})`);
+    }
+    return out;
+  }, min);
+  for (const b of bad) fail(where, `контраст текста ниже 4,5:1: ${b}`);
+}
+
 async function press(page, selector, how) {
   await ready(page);
   if (how === 'touch') await page.tap(selector);
@@ -183,6 +232,7 @@ async function checkIntro(page, vp, test, where) {
   check(info.count === `${test.questions.length} вопросов`, where, `заставка: «${info.count}»`);
   check(info.emoji === test.emoji && info.text && info.text.length > 10, where, 'заставка: нет эмодзи или строки о тесте');
   check(testParam(page) === test.id, where, `в адресе нет ?test=${test.id}`);
+  await auditContrast(page, where + '/заставка');
 }
 
 /* Пройти один тест (с экрана первого вопроса). targetScore — сколько ответить верно. */
@@ -270,6 +320,15 @@ async function playTest(page, vp, test, targetScore, opts) {
     if (q.type === 'memory') check(!!(await page.$('.feedback .mem-grid')), where, `вопрос ${i + 1}: после ответа не показано, что было на картинке`);
     const allDisabled = await page.$$eval('.answer', (els) => els.every((e) => e.disabled));
     check(allDisabled, where, `вопрос ${i + 1}: после ответа можно нажать другой вариант`);
+    if (q.a.every((x) => /^\d+$/.test(x))) {
+      // Числа — обычным шрифтом, как остальные ответы (не эмодзи-цифрами)
+      const numInfo = await page.$$eval('.answer', (els) => els.map((e) => ({ cls: e.className, font: getComputedStyle(e.querySelector('.answer__text')).fontFamily })));
+      check(numInfo.every((x) => !x.cls.includes('answer--emoji') && !/Emoji/i.test(x.font.split(',')[0])), where, `вопрос ${i + 1}: числа в ответах рисуются эмодзи-шрифтом`);
+    }
+    if (i === 1 || q.kind === 'count' || q.a.every((x) => /^\d+$/.test(x))) {
+      await page.waitForTimeout(350); // дождаться перекраски кнопок
+      await auditContrast(page, `${where}/вопрос ${i + 1} после ответа`);
+    }
 
     if (vp.short === 'phone') {
       await page.waitForTimeout(500);
@@ -323,6 +382,7 @@ async function checkResult(page, vp, test, score) {
   check((await page.textContent('.result__text')).trim() === rank.text, where, 'фраза под званием не та');
   for (const a of ['share', 'again', 'home']) check(!!(await page.$(`[data-action="${a}"]`)), where, `нет кнопки ${a} на экране результата`);
   await noHorizontalScroll(page, where);
+  await auditContrast(page, where + '/результат');
 }
 
 function expectedShareText(test, score) {
@@ -422,6 +482,7 @@ async function runViewport(browser, base, vp, tests, downloadsDir) {
   check(!(await page.$('.chip--best')), vp.short, 'на чистом запуске уже показан лучший результат');
   await noHorizontalScroll(page, vp.short);
   await shot(page, `${vp.short}-home`);
+  await auditContrast(page, `${vp.short}/главный`);
 
   // Кнопка звука: выключить, перезагрузить — должна остаться выключенной, потом включить
   await press(page, '.sound-btn', how);
@@ -476,6 +537,7 @@ async function runViewport(browser, base, vp, tests, downloadsDir) {
     console.log('готово');
   }
   await shot(page, `${vp.short}-home-after`);
+  await auditContrast(page, `${vp.short}/главный с рекордами`);
 
   // Кнопка «назад» браузера/телефона посреди теста и на результате — к списку тестов
   if (!ONLY) {
@@ -710,6 +772,38 @@ async function extraChecks(browser, base, tests, port) {
     await ctx2.close();
     console.log('  280px без прокрутки вбок; на 360×640 «Поделиться» видно сразу');
   }
+
+  // 6б) «Запомни» в альбоме: картинка, таймер и «Готово» помещаются без прокрутки
+  for (const size of [{ width: 844, height: 390 }, { width: 640, height: 360 }]) {
+    const tag = `альбом ${size.width}×${size.height}`;
+    const ctx = await newContext(browser, { viewport: size, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+    const page = await ctx.newPage();
+    attachErrorWatch(page, tag);
+    for (let run = 0; run < 2; run++) {
+      await page.goto(base + '?test=' + memory.id);
+      await press(page, '[data-action="start"]', 'touch');
+      for (let i = 0; i < 10; i++) {
+        await page.waitForSelector('.memorize');
+        const fit = await page.evaluate(() => {
+          const H = window.innerHeight, W = window.innerWidth;
+          const els = [...document.querySelectorAll('.memorize .mem-cell, .memorize .timer, [data-action="ready"]')];
+          const out = els.filter((e) => { const r = e.getBoundingClientRect(); return r.bottom > H + 0.5 || r.right > W + 0.5 || r.top < 0; })
+            .map((e) => `${e.className || e.getAttribute('data-action')} низ ${Math.round(e.getBoundingClientRect().bottom)}`);
+          return { out, scroll: document.documentElement.scrollHeight > H + 1, sw: document.documentElement.scrollWidth > W + 1,
+            q: window.QuizApp.state().questions[window.QuizApp.state().idx].q };
+        });
+        check(!fit.out.length && !fit.sw, tag, `вопрос ${i + 1} («${fit.q}»): за краем экрана — ${fit.out.join(', ') || 'прокрутка вбок'}`);
+        if (run === 0 && (i === 5 || i === 9)) await shot(page, `land${size.width}-mem-q${i + 1}`);
+        await page.waitForSelector('[data-action="ready"]:not([disabled])');
+        await press(page, '[data-action="ready"]', 'touch');
+        await press(page, '.answer[data-index="0"]', 'touch');
+        await press(page, '.next-btn', 'touch');
+      }
+      await page.waitForSelector('.result__card');
+    }
+    await ctx.close();
+  }
+  console.log('  «запомни» в альбоме 844×390 и 640×360: картинка, таймер и «Готово» на экране');
 
   // 7) Внутри чужого iframe (как в ВК/ОК): ни одной ошибки в консоли, «Поделиться» работает
   {

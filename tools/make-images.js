@@ -25,7 +25,7 @@ const COVER = (tests) => `<!doctype html><html><head><meta charset="utf-8"><styl
     background: linear-gradient(135deg, #fff4e3, #ffe2bd); color: #2f2217; position: relative; }
   .dot { position: absolute; border-radius: 50%; background: rgba(191, 54, 12, 0.08); }
   .head { position: absolute; left: 70px; top: 64px; display: flex; align-items: center; gap: 28px; }
-  .logo { width: 128px; height: 128px; border-radius: 36px; background: linear-gradient(135deg, #e0561f, #bf360c);
+  .logo { width: 128px; height: 128px; border-radius: 36px; background: linear-gradient(135deg, #c74a0e, #b83a12);
     color: #fff; font-size: 92px; font-weight: 900; display: grid; place-items: center; transform: rotate(-6deg);
     box-shadow: 0 8px 0 rgba(120, 30, 0, 0.25); }
   h1 { font-size: 104px; font-weight: 900; letter-spacing: -2px; line-height: 1; }
@@ -49,7 +49,7 @@ const COVER = (tests) => `<!doctype html><html><head><meta charset="utf-8"><styl
 const ICON = `<!doctype html><html><head><meta charset="utf-8"><style>
   * { margin: 0; }
   body { width: 180px; height: 180px; overflow: hidden; display: grid; place-items: center;
-    background: linear-gradient(135deg, #e0561f, #bf360c); font-family: ${FONT}; }
+    background: linear-gradient(135deg, #c74a0e, #b83a12); font-family: ${FONT}; }
   div { color: #fff; font-size: 132px; font-weight: 900; line-height: 1; transform: rotate(-6deg) translateY(4px);
     text-shadow: 0 6px 0 rgba(90, 20, 0, 0.3); }
 </style></head><body><div>?</div></body></html>`;

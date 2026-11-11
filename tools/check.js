@@ -1002,10 +1002,11 @@ async function extraChecks(browser, base, tests, port) {
     await frame.click('[data-action="copy"]');
     await frame.waitForSelector('#toast.show', { timeout: 3000 }).catch(() => fail('iframe', 'нет подсказки после копирования'));
     await page.waitForTimeout(300);
+    const copyToast = (await frame.textContent('#toast')).trim(); // при смене экрана подсказка убирается
     await frame.click('[data-action="close"]');
     await press(frame, '[data-action="home"]', 'mouse');
     await frame.waitForSelector('.test-card', { timeout: 3000 }).catch(() => fail('iframe', '«Другие тесты» в iframe не открыли список'));
-    console.log(`  в чужом iframe: без ошибок в консоли, «Поделиться» открывает окно, копирование: «${(await frame.textContent('#toast')).trim()}»`);
+    console.log(`  в чужом iframe: без ошибок в консоли, «Поделиться» открывает окно, копирование: «${copyToast}»`);
     await ctx.close();
   }
 

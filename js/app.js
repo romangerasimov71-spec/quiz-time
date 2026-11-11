@@ -7,7 +7,8 @@
   var READY_DELAY_MS = 1500;   // «Готово, спрашивайте!» активна не раньше, чем через столько
   var HOME_COLOR = '#bf360c';
   var PER_RUN = 10;            // вопросов за одно прохождение (у теста можно задать perRun)
-  var HOME_KEYS = 9;           // клавиши 1–9 на главном экране — для первых девяти тестов
+  var HOME_KEYS = 10;          // клавиши 1–9 и 0 на главном экране — для первых десяти тестов (дальше — стрелки)
+  var MEMO_MIN_LEFT_MS = 1500; // после паузы картинка «запомни» видна ещё столько, даже если время почти вышло
 
   // Порядок тестов на главном экране (по id). Теста нет в index.html — он просто
   // пропускается; тест, которого нет в списке, встаёт в конец.
@@ -105,8 +106,17 @@
     document.documentElement.style.setProperty('--accent', color);
   }
 
+  /* Сообщение — вверху, под строкой «Вопрос N из 10» (там, где ему нечего закрывать), и прозрачно
+     для касаний (pointer-events: none в CSS): нажатие сквозь него доходит до кнопки под ним. */
+  function placeToast() {
+    var row = app.querySelector('.topbar__row, .result__top, .home__head');
+    var top = row ? Math.max(8, row.getBoundingClientRect().bottom + 8) : 12;
+    toastEl.style.top = Math.round(top) + 'px';
+  }
+
   var toastTimer = null;
   function toast(text) {
+    placeToast();
     toastEl.textContent = text;
     toastEl.hidden = false;
     // перезапуск появления
@@ -176,9 +186,81 @@
     app.setAttribute('data-screen', name);
     document.body.className = 'on-' + name;
     app.appendChild(node);
-    fitMemGrids();
     window.scrollTo(0, 0);
+    fitMemGrids();
+    fitScreen(false);
     lockInput(INPUT_LOCK_MS);
+  }
+
+  /* ---------- всё главное — над баннером, без прокрутки ---------- */
+  /* Невысокий экран (360×640, телефон в альбоме) плюс баннер 90 px: варианты ответа, картинка
+     «запомни» с «Готово» и кнопки результата должны помещаться над баннером. Если не помещаются,
+     экран по ступеням «уплотняется» (fit-1, fit-2, fit-3 — классы в CSS: меньше отступы, шрифт
+     вопроса не меньше 20 px, кнопки ответа не ниже 52 px; в альбоме — вопрос сбоку от вариантов).
+     Помещается сразу (большой экран) — ничего не меняется. */
+  function bannerReserve() {
+    var css = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--banner-h')) || 0;
+    var plan = PF && PF.banner && PF.banner.mode && PF.banner.mode !== 'none' ? (PF.banner.reservePx || 0) : 0;
+    return Math.max(css, plan);
+  }
+  function visibleBottom() { return window.innerHeight - bannerReserve() - 4; }
+  function docBottom(el) { return el.getBoundingClientRect().bottom + (window.pageYOffset || 0); }
+  function fitsOnScreen(el) { return !el || docBottom(el) <= visibleBottom(); }
+
+  function setFitLevel(main, lvl) {
+    for (var k = 1; k <= 3; k++) main.classList.toggle('fit-' + k, k <= lvl);
+    main.setAttribute('data-fit', String(lvl));
+  }
+  // keep = не «разуплотнять» (тот же экран: подсказка сработала и т.п. — чтобы кнопки не прыгали)
+  function fitLevels(main, target, max, keep) {
+    if (!target) return;
+    var from = keep ? (parseInt(main.getAttribute('data-fit'), 10) || 0) : 0;
+    for (var lvl = from; lvl <= max; lvl++) {
+      setFitLevel(main, lvl);
+      if (fitsOnScreen(target)) return;
+    }
+  }
+
+  function fitScreen(keep) {
+    var main = app.firstElementChild;
+    if (!main || !main.classList) return;
+    if (screen === 'question' && state && state.phase === 'memorize') fitMemorize(main, keep);
+    else if (screen === 'question' && state && state.phase === 'ask') {
+      placeHint();
+      var as = app.querySelectorAll('.ask .answer');
+      fitLevels(main, as[as.length - 1], 3, keep);
+    } else if (screen === 'result') {
+      var bs = app.querySelectorAll('.result__actions .btn');
+      fitLevels(main, bs[bs.length - 1], 2, keep);
+    }
+  }
+
+  // «Запомни»: сначала уплотняем подписи, потом уменьшаем картинку по оставшейся высоте
+  function fitMemorize(main, keep) {
+    var grid = app.querySelector('.memorize .mem-grid');
+    var ready = app.querySelector('[data-action="ready"]');
+    if (!grid || !ready) return;
+    if (!keep) { grid.style.maxWidth = ''; grid.style.removeProperty('--cell'); }
+    var bottom = function () { return Math.max(docBottom(ready), docBottom(grid)); };
+    if (!keep) setFitLevel(main, 0);
+    if (bottom() > visibleBottom()) setFitLevel(main, 1);
+    if (bottom() <= visibleBottom()) { fitMemGrids(); return; }
+    var cols = parseInt(grid.style.getPropertyValue('--cols'), 10) || 3;
+    var gap = parseFloat(getComputedStyle(grid).columnGap) || 8;
+    var side = getComputedStyle(app.querySelector('.memorize')).display === 'grid';   // альбом: картинка слева
+    var cell = grid.querySelector('.mem-cell');
+    var cw = Math.floor(cell ? cell.getBoundingClientRect().width : 80);
+    var setCell = function (px) {
+      if (side) grid.style.setProperty('--cell', px + 'px');
+      else grid.style.maxWidth = (cols * px + (cols - 1) * gap + 1) + 'px';
+    };
+    // Уменьшаем клетки, пока картинка и «Готово» не встанут над баннером (в альбоме меньшая
+    // картинка ещё и даёт место правой колонке — заголовок и кнопка перестают переноситься).
+    for (var px = cw - 4; px >= 36; px -= 4) {
+      setCell(px);
+      if (bottom() <= visibleBottom()) break;
+    }
+    fitMemGrids();
   }
 
   /* ---------- адрес и кнопка «назад» ---------- */
@@ -206,8 +288,58 @@
     try { if (u) history.replaceState(null, '', u); } catch (e) { /* ничего */ }
   }
 
+  /* Посреди теста (уже ответил хотя бы на один вопрос) уйти можно только через вопрос
+     «Выйти из теста?»: «‹ Тесты», Esc, «назад» браузера и телефона. До первого ответа
+     и на экране результата — уходим сразу. */
+  function midTest() {
+    return !!(state && !state.ended && screen === 'question' &&
+      (state.phase === 'ask' || state.phase === 'memorize') && (state.idx > 0 || state.answered));
+  }
+
+  var exitDlg = null;
+  function askExit() {
+    if (exitDlg) return;
+    var stay = h('button', { class: 'btn btn--primary', type: 'button', 'data-action': 'exit-stay', onclick: closeExit }, ['Остаться']);
+    var leave = h('button', { class: 'btn btn--ghost', type: 'button', 'data-action': 'exit-leave',
+      onclick: function () { closeExit(); leaveTest(); } }, ['Выйти']);
+    var box = h('div', { class: 'exit-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'exit-title' }, [
+      h('div', { class: 'exit-dialog__box' }, [
+        h('p', { class: 'exit-dialog__title', id: 'exit-title', text: 'Выйти из теста?' }),
+        h('p', { class: 'exit-dialog__text', text: 'Ответы не сохранятся.' }),
+        stay, leave
+      ])
+    ]);
+    box.addEventListener('click', function (e) { if (e.target === box) closeExit(); });   // мимо окна — «Остаться»
+    function trap(e) {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeExit(); return; }
+      if (e.key === 'Tab') {   // фокус не уходит из окна
+        e.preventDefault();
+        (document.activeElement === stay ? leave : stay).focus();
+      }
+    }
+    document.addEventListener('keydown', trap, true);
+    document.body.appendChild(box);
+    document.body.classList.add('is-modal');
+    app.setAttribute('inert', '');
+    exitDlg = { box: box, trap: trap };
+    try { stay.focus({ preventScroll: true }); } catch (e) { stay.focus(); }
+  }
+  function closeExit() {
+    if (!exitDlg) return;
+    document.removeEventListener('keydown', exitDlg.trap, true);
+    exitDlg.box.remove();
+    exitDlg = null;
+    document.body.classList.remove('is-modal');
+    app.removeAttribute('inert');
+  }
+  function leaveTest() { navigateHome(); }
+
   // «‹ Тесты», «Другие тесты», Esc: шаг назад по истории (как кнопка «назад» телефона)
   function goHome() {
+    if (midTest()) { askExit(); return; }
+    navigateHome();
+  }
+  function navigateHome() {
     noteAbandon('back');
     if (history.state && history.state.quiz) {
       var before = screen;
@@ -220,9 +352,15 @@
     }
   }
 
+  // «Назад» браузера/телефона уже сработал — возвращаем запись теста в историю, чтобы
+  // следующий «назад» снова спросил, а не выкинул из теста.
+  function restoreTestEntry() { if (state && state.test) pushTest(state.test); }
+
   window.addEventListener('popstate', function () {
-    // «Назад», пока ждём рекламу, — это «Отмена» (сообщать о ней некому: человек ушёл с вопроса)
-    if (adBusy && PF && PF.isWaitingRewarded && PF.isWaitingRewarded()) { cancelledByBack = true; PF.cancelRewarded(); }
+    // «Назад» закрывает верхнее окно: пока ждём рекламу — это «Отмена» (остаёмся на вопросе)
+    if (adBusy && PF && PF.isWaitingRewarded && PF.isWaitingRewarded()) { restoreTestEntry(); userCancel(); return; }
+    if (exitDlg) { restoreTestEntry(); closeExit(); return; }               // «назад» в окне «Выйти?» = «Остаться»
+    if (midTest()) { restoreTestEntry(); askExit(); return; }
     noteAbandon('back');
     var t = testFromUrl();
     if (t) { introSource = 'home'; showIntro(t); } else showHome();
@@ -265,7 +403,7 @@
             best != null ? h('span', { class: 'chip chip--best', text: '🏆 ' + best + ' из ' + total }) : null
           ])
         ]),
-        i < HOME_KEYS ? h('span', { class: 'test-card__key', 'aria-hidden': 'true', text: String(i + 1) }) : null
+        i < HOME_KEYS ? h('span', { class: 'test-card__key', 'aria-hidden': 'true', text: String((i + 1) % 10) }) : null
       ]);
     });
 
@@ -284,6 +422,13 @@
 
   /* ---------- заставка теста ---------- */
 
+  function freshLine(t) {
+    var gen = t.questions.some(function (q) { return typeof q.make === 'function'; });
+    if (gen) return h('p', { class: 'intro__fresh', text: 'Каждый раз — новые картинки' });
+    if (t.questions.length > runLength(t)) return h('p', { class: 'intro__fresh', text: 'Каждый раз — новые вопросы' });
+    return null;
+  }
+
   function showIntro(t) {
     state = null;
     setTheme(t.color);
@@ -298,7 +443,7 @@
         h('div', { class: 'intro__emoji', 'aria-hidden': 'true', text: t.emoji }),
         h('h1', { class: 'intro__title', text: t.title }),
         h('p', { class: 'intro__count', text: wordQuestions(runLength(t)) }),
-        t.questions.length > runLength(t) ? h('p', { class: 'intro__fresh', text: 'Каждый раз — новые вопросы' }) : null,
+        freshLine(t),
         h('p', { class: 'intro__text', text: t.intro || t.subtitle || '' }),
         best != null ? h('p', { class: 'intro__best', text: '🏆 Ваш лучший результат: ' + best + ' из ' + runLength(t) }) : null,
         startBtn
@@ -399,13 +544,14 @@
     showQuestion();
   }
 
-  function topBar() {
+  function topBar(extra) {
     var t = state.test;
     var n = state.idx + 1;
     return h('div', { class: 'topbar' }, [
       h('div', { class: 'topbar__row' }, [
         backButton(false),
         h('div', { class: 'topbar__count', text: 'Вопрос ' + n + ' из ' + state.total }),
+        extra || null,
         soundButton()
       ]),
       h('div', { class: 'progress', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': String(state.total), 'aria-valuenow': String(n - 1) }, [
@@ -459,7 +605,7 @@
     }
   }
   var fitTimer = null;
-  function refit() { clearTimeout(fitTimer); fitTimer = setTimeout(fitMemGrids, 60); }
+  function refit() { clearTimeout(fitTimer); fitTimer = setTimeout(function () { fitScreen(false); fitMemGrids(); }, 60); }
   window.addEventListener('resize', refit);
   window.addEventListener('orientationchange', refit);
 
@@ -470,15 +616,19 @@
     else showAsk(q);
   }
 
-  /* Тип «запомни»: сначала показываем набор на q.seconds секунд. */
-  function showMemorize(q) {
-    var secs = q.seconds || 5;
+  /* Тип «запомни»: сначала показываем набор на q.seconds секунд.
+     leftMs — после паузы (свернули, реклама): показываем оставшееся время, но не меньше 1,5 с —
+     честный игрок, которого отвлекли, успеет глянуть, а «разглядывать бесконечно» нельзя. */
+  function showMemorize(q, leftMs) {
+    var full = (q.seconds || 5) * 1000;
+    var left = leftMs == null ? full : Math.min(full, Math.max(MEMO_MIN_LEFT_MS, leftMs));
+    var readyIn = Math.min(READY_DELAY_MS, left);
     state.phase = 'memorize';
     state.memoInterrupted = false;
-    state.readyAt = Date.now() + READY_DELAY_MS;
-    var endAt = Date.now() + secs * 1000;
-    var bar = h('div', { class: 'timer__fill', style: 'animation-duration:' + secs + 's' });
-    var secsEl = h('b', { class: 'memorize__secs', text: String(secs) });
+    state.readyAt = Date.now() + readyIn;
+    var endAt = state.memoEndAt = Date.now() + left;
+    var bar = h('div', { class: 'timer__fill', style: 'animation-duration:' + (full / 1000) + 's;animation-delay:-' + ((full - left) / 1000) + 's' });
+    var secsEl = h('b', { class: 'memorize__secs', text: String(Math.ceil(left / 1000)) });
     var go = function () { if (state && state.phase === 'memorize') showAsk(q); };
     var ready = h('button', { class: 'btn btn--ghost', type: 'button', 'data-action': 'ready', disabled: true,
       onclick: function () { if (Date.now() >= state.readyAt) go(); } }, ['Готово, спрашивайте!']);
@@ -492,13 +642,13 @@
         ready
       ])
     ]), 'question');
-    later(function () { ready.disabled = false; }, READY_DELAY_MS);
+    later(function () { ready.disabled = false; }, readyIn);
     (function tick() {
-      var left = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
-      secsEl.textContent = String(left);
-      if (left > 0) later(tick, Math.min(1000, endAt - Date.now() - (left - 1) * 1000 + 5));
+      var sec = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+      secsEl.textContent = String(sec);
+      if (sec > 0) later(tick, Math.min(1000, endAt - Date.now() - (sec - 1) * 1000 + 5));
     })();
-    later(go, secs * 1000);
+    later(go, left);
   }
 
   function showAsk(q) {
@@ -521,12 +671,15 @@
       ]);
     });
 
+    var slot = hintSlot();
+    var hint = hintButton(slot);
     render(h('main', { class: 'quiz' }, [
-      topBar(),
+      topBar(slot === 'top' ? hint : null),
       h('section', { class: 'ask' }, [
         h('h2', { class: 'question', text: q.q }),
+        slot === 'above' ? hint : null,
         h('div', { class: 'answers' + (tiles ? ' answers--tiles' : '') }, buttons),
-        hintButton(),
+        slot === 'below' ? hint : null,
         h('div', { class: 'feedback', hidden: true })
       ])
     ]), 'question');
@@ -544,8 +697,13 @@
     var right = picked.correct;
     if (right) { state.score++; QuizSound.correct(); } else { QuizSound.wrong(); }
 
+    // Кнопка подсказки больше не нужна. Над вариантами и вверху — только прячем (место остаётся,
+    // варианты не прыгают), под вариантами — убираем (там сейчас появится «Дальше»).
     var hb = app.querySelector('.hint-btn');
-    if (hb) hb.remove();
+    if (hb) {
+      if (hb.getAttribute('data-slot') === 'below') hb.remove();
+      else { hb.disabled = true; hb.style.visibility = 'hidden'; hb.setAttribute('aria-hidden', 'true'); }
+    }
     var btns = app.querySelectorAll('.answer');
     Array.prototype.forEach.call(btns, function (b, k) {
       b.disabled = true;
@@ -610,7 +768,8 @@
   var adBusy = false;      // ждём рекламу (окно «Загружаем рекламу…»)
   var adShowing = false;   // реклама на экране (в том числе опоздавшая)
   var adGrants = 0;        // сколько подсказок выдано за этот запуск (для автотеста)
-  var cancelledByBack = false;
+  var userCancelled = false;   // человек сам отменил ожидание: «Отмена», Esc или «назад»
+  var AD_CANCEL_TEXT = 'Вы отменили рекламу — подсказки нет.';
   var AD_FAIL_TEXT = {
     closed: 'Реклама закрыта раньше конца — подсказки нет. Можно попробовать ещё раз.',
     error: 'Реклама сейчас недоступна. Попробуйте чуть позже.',
@@ -621,16 +780,55 @@
     return !!(state && state.hintsLeft > 0 && PF && PF.rewardedAvailable && PF.rewardedAvailable());
   }
 
-  function hintButton() {
+  /* Где кнопка подсказки: на большом экране — под вариантами (крупная); на невысоком (≤ 700 px) —
+     узкой строкой над вариантами; телефон в альбоме — в верхней строке, между «Вопрос N» и звуком.
+     Так варианты ответа не уезжают под баннер из-за подсказки. */
+  function hintSlot() {
+    var w = window.innerWidth, hh = window.innerHeight;
+    if (w > hh && hh <= 520) return 'top';
+    if (hh <= 700) return 'above';
+    return 'below';
+  }
+  function slotClass(base, slot) { return base + ' ' + base + '--' + slot; }
+
+  function hintButton(slot) {
     if (!hintAvailable() || state.hintPending) return null;
     if (!state.hintOffered) {
       state.hintOffered = true;
       AN.event('hint_offered', { level_id: state.test.id, step_index: state.idx + 1 });
     }
-    return h('button', { class: 'btn btn--ghost hint-btn', type: 'button', 'data-action': 'hint', onclick: startHintAd }, [
+    return h('button', { class: 'btn btn--ghost ' + slotClass('hint-btn', slot), type: 'button', 'data-action': 'hint', 'data-slot': slot,
+      'aria-label': 'Подсказка «50 на 50» за просмотр рекламы', onclick: startHintAd }, [
       h('span', { class: 'hint-btn__icon', 'aria-hidden': 'true', text: '½' }),
-      h('span', { text: '50 на 50 (за рекламу)' })
+      h('span', { class: 'hint-btn__text', text: slot === 'top' ? '50 на 50' : '50 на 50 (за рекламу)' })
     ]);
+  }
+  function hintNote(slot) {
+    return h('p', { class: slotClass('hint-note', slot), role: 'status', 'data-slot': slot,
+      text: slot === 'top' ? '½ Два неверных убраны' : '½ Подсказка: два неверных ответа убраны' });
+  }
+
+  // Поставить кнопку (или строку «подсказка сработала») на место для текущего размера экрана
+  function placeHint() {
+    var el = app.querySelector('.hint-btn, .hint-note');
+    if (!el) return;
+    var slot = hintSlot();
+    if (el.getAttribute('data-slot') === slot) return;
+    var isBtn = el.classList.contains('hint-btn');
+    var fresh = isBtn ? hintButton(slot) : hintNote(slot);
+    if (!fresh) return;
+    if (isBtn && el.disabled) { fresh.disabled = true; fresh.style.visibility = 'hidden'; }
+    el.remove();
+    insertHint(fresh, slot);
+  }
+  function insertHint(el, slot) {
+    if (slot === 'top') {
+      var snd = app.querySelector('.topbar__row .sound-btn');
+      if (snd) snd.parentNode.insertBefore(el, snd);
+    } else {
+      var ans = app.querySelector('.ask .answers');
+      if (ans) ans.insertAdjacentElement(slot === 'above' ? 'beforebegin' : 'afterend', el);
+    }
   }
 
   // Убрать два неверных варианта на текущем вопросе
@@ -645,9 +843,22 @@
     });
     state.hintUsed = true;
     var hb = app.querySelector('.hint-btn');
-    if (hb) hb.remove();
-    var ask = app.querySelector('.ask .answers');
-    if (ask && !app.querySelector('.hint-note')) ask.insertAdjacentElement('afterend', h('p', { class: 'hint-note', role: 'status', text: '½ Подсказка: два неверных ответа убраны' }));
+    var slot = hb ? hb.getAttribute('data-slot') : hintSlot();
+    if (!app.querySelector('.hint-note')) {
+      var note = hintNote(slot);
+      if (hb) hb.parentNode.replaceChild(note, hb); else insertHint(note, slot);
+    } else if (hb) hb.remove();
+    fitScreen(true);
+  }
+
+  function userCancel() { userCancelled = true; if (PF) PF.cancelRewarded(); }
+
+  // Опоздавшая реклама досмотрена, а подсказку уже не к чему применить — сказать, почему её нет
+  function lateRewardUseless(run) {
+    var text = 'Реклама досмотрена, но вы уже вышли из теста — подсказка не пригодилась.';
+    if (state && state !== run && state.test === run.test) text = 'Реклама досмотрена, но тест уже начат заново — подсказка не пригодилась.';
+    else if (state === run && run.ended) text = 'Реклама досмотрена, но тест уже закончен — подсказка не пригодилась.';
+    toast(text);
   }
 
   function grantHint(run, late) {
@@ -665,7 +876,7 @@
   // Окно «ждём рекламу»: всё остальное не нажимается, есть «Отмена» (и Esc).
   function adWaitOverlay() {
     var cancel = h('button', { class: 'btn btn--ghost', type: 'button', 'data-action': 'ad-cancel',
-      onclick: function () { if (PF) PF.cancelRewarded(); } }, ['Отмена']);
+      onclick: userCancel }, ['Отмена']);
     var box = h('div', { class: 'ad-wait', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Загружаем рекламу' }, [
       h('div', { class: 'ad-wait__box' }, [
         h('div', { class: 'spinner', 'aria-hidden': 'true' }),
@@ -673,7 +884,7 @@
         cancel
       ])
     ]);
-    function trap(e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (PF) PF.cancelRewarded(); } }
+    function trap(e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); userCancel(); } }
     document.addEventListener('keydown', trap, true);
     document.body.appendChild(box);
     document.body.classList.add('is-ad-wait');
@@ -687,10 +898,14 @@
     };
   }
 
-  // Опоздавшая реклама открылась, пока показывали картинку «запомни»: таймер не должен идти
-  // за рекламой — когда реклама закроется, картинка покажется заново с полным временем.
+  // Пауза, пока показывают картинку «запомни» (опоздавшая реклама, свернули приложение, скрыли
+  // вкладку): таймер не идёт. После паузы картинка — на оставшееся время (не меньше 1,5 с).
   function interruptMemorize() {
-    if (state && state.phase === 'memorize') { state.memoInterrupted = true; clearTimers(); }
+    if (state && state.phase === 'memorize' && !state.memoInterrupted) {
+      state.memoInterrupted = true;
+      state.memoLeftMs = Math.max(0, (state.memoEndAt || 0) - Date.now());
+      clearTimers();
+    }
   }
   function setAdShowing(v) {
     adShowing = v;
@@ -700,7 +915,7 @@
   function resumeAfterAd() {
     updateBanner();
     if (state && state.phase === 'memorize' && state.memoInterrupted && !adShowing && !(PF && PF.isPaused && PF.isPaused())) {
-      showMemorize(state.questions[state.idx]);
+      showMemorize(state.questions[state.idx], state.memoLeftMs);
     }
   }
 
@@ -709,14 +924,14 @@
     var run = state;
     AN.event('hint_clicked', { level_id: run.test.id, step_index: run.idx + 1 });
     adBusy = true;
-    cancelledByBack = false;
+    userCancelled = false;
     updateBanner();
     var done = adWaitOverlay();
     PF.showRewarded({
       placement: 'hint',
       onOpen: function () { setAdShowing(true); },
       onLateOpen: function () { setAdShowing(true); hideToast(); interruptMemorize(); },
-      onLateReward: function () { setAdShowing(false); grantHint(run, true); resumeAfterAd(); },
+      onLateReward: function () { setAdShowing(false); if (!grantHint(run, true)) lateRewardUseless(run); resumeAfterAd(); },
       onLateFail: function (reason) {
         setAdShowing(false);
         AN.event('ad_reward_failed', { reason: AD_FAIL_TEXT[reason] ? reason : 'error', late: true });
@@ -732,10 +947,10 @@
       if (good) grantHint(run, false);
       else AN.event('ad_reward_failed', { reason: reason, late: false });
       resumeAfterAd();
-      // ушёл «назад» или из прохождения — сообщать некому
-      if (!good && !cancelledByBack && run === state && !run.ended) toast(AD_FAIL_TEXT[reason]);
+      // ушёл из прохождения — сообщать некому
+      if (!good && run === state && !run.ended) toast(userCancelled ? AD_CANCEL_TEXT : AD_FAIL_TEXT[reason]);
       var hb = app.querySelector('.hint-btn');
-      if (hb && !cancelledByBack) { try { hb.focus({ preventScroll: true }); } catch (e) { /* ничего */ } }
+      if (hb) { try { hb.focus({ preventScroll: true }); } catch (e) { /* ничего */ } }
     });
   }
 
@@ -818,6 +1033,7 @@
   document.addEventListener('keydown', function (e) {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     if (adBusy) return;   // ждём рекламу: клавиши слушает окно «Загружаем рекламу» (Esc — отмена)
+    if (exitDlg) return;  // окно «Выйти из теста?» слушает клавиши само (Esc — остаться)
     if (QuizShare.isDialogOpen && QuizShare.isDialogOpen()) return; // окно «Поделиться» само слушает клавиши
     var key = e.key;
     var activeKey = key === 'Enter' || key === ' ' || /^[0-9]$/.test(key);
@@ -830,7 +1046,8 @@
       return;
     }
     if (screen === 'home') {
-      var n = parseInt(key, 10);
+      if (/^Arrow(Up|Down|Left|Right)$/.test(key)) { e.preventDefault(); moveCardFocus(key); return; }
+      var n = key === '0' ? 10 : parseInt(key, 10);
       if (n >= 1 && n <= Math.min(tests.length, HOME_KEYS)) { e.preventDefault(); openTest(tests[n - 1]); }
       return;
     }
@@ -857,6 +1074,21 @@
       } else if (state.phase === 'ask' && state.answered) { e.preventDefault(); nextQuestion(); }
     }
   }, true);
+
+  // Главный экран: стрелки водят фокус по карточкам тестов (до 11-го и дальше), Enter — открыть
+  function moveCardFocus(key) {
+    var cards = Array.prototype.slice.call(app.querySelectorAll('.test-card'));
+    if (!cards.length) return;
+    var i = cards.indexOf(document.activeElement);
+    var cols = cards.filter(function (c) { return c.offsetTop === cards[0].offsetTop; }).length || 1;
+    var j = 0;
+    if (i >= 0) {
+      var step = key === 'ArrowDown' ? cols : key === 'ArrowUp' ? -cols : key === 'ArrowRight' ? 1 : -1;
+      j = Math.max(0, Math.min(cards.length - 1, i + step));
+    }
+    try { cards[j].focus({ preventScroll: true }); } catch (e) { cards[j].focus(); }
+    try { cards[j].scrollIntoView({ block: 'nearest' }); } catch (e) { /* ничего */ }
+  }
 
   /* ---------- запуск ---------- */
 
@@ -905,6 +1137,10 @@
       if (paused) interruptMemorize(); else resumeAfterAd();
     });
     window.addEventListener('pagehide', function () { noteAbandon('exit'); });
+    // Свернули приложение / скрыли вкладку — картинка «запомни» на паузе (и на площадке без Bridge)
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) interruptMemorize(); else resumeAfterAd();
+    });
     QuizStore.init(storeKeys()).then(null, function () { /* без сохранённого */ }).then(function () {
       boot();
       appReady = true;
@@ -925,7 +1161,8 @@
     order: TEST_ORDER.slice(),
     isReady: function () { return appReady; },
     adGrants: function () { return adGrants; },
-    adBusy: function () { return adBusy; }
+    adBusy: function () { return adBusy; },
+    exitAsked: function () { return !!exitDlg; }
   };
 
   start();

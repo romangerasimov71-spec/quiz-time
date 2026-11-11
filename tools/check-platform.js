@@ -116,6 +116,17 @@ async function bannerClear(page, label, strict) {
   if (r.noBanner) return;
   ok(!r.under.length, label + ": баннер (" + r.h + "px) не закрывает текст и кнопки" + (strict ? " (без прокрутки)" : "") + (r.under.length ? " " + JSON.stringify(r.under.slice(0, 4)) : ""));
 }
+// Без прокрутки (как открылся экран): все элементы sel — над баннером
+async function aboveBanner(page, sel) {
+  return page.evaluate((q) => {
+    window.scrollTo(0, 0);
+    const ban = document.querySelector(".fake-banner");
+    const top = ban && getComputedStyle(ban).display !== "none" ? ban.getBoundingClientRect().top : window.innerHeight;
+    const els = [...document.querySelectorAll(q)].filter((e) => e.getBoundingClientRect().height > 0 && getComputedStyle(e).visibility !== "hidden");
+    const under = els.filter((e) => e.getBoundingClientRect().bottom > top + 0.5).map((e) => (e.getAttribute("data-action") || e.className) + " " + Math.round(e.getBoundingClientRect().bottom) + ">" + Math.round(top));
+    return { n: els.length, under };
+  }, sel);
+}
 const bannerHidden = (page) => page.evaluate(() => { const b = document.querySelector(".fake-banner"); if (!b) return true; return getComputedStyle(b).display === "none" || b.getBoundingClientRect().height === 0; });
 const noSideScroll = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 
@@ -137,8 +148,9 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
   }
 
   console.log("\nБаннер не закрывает вопрос, ответы, «Дальше», «Поделиться»:");
-  for (const vp of [{ width: 390, height: 844 }, { width: 360, height: 640 }, { width: 844, height: 390 }, { width: 1280, height: 800 }]) {
+  for (const vp of [{ width: 390, height: 844 }, { width: 360, height: 640 }, { width: 640, height: 360 }, { width: 844, height: 390 }, { width: 1280, height: 800 }]) {
     const label = vp.width + "×" + vp.height;
+    const phone = vp.width < 900;
     const page = await open(browser, BASE + "?fakeadsec=1", vp);
     await bannerClear(page, label + " главная");
     await shot(page, "banner-" + label + "-home");
@@ -148,6 +160,24 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     await page.waitForSelector(".hint-btn");
     await bannerClear(page, label + " вопрос с кнопкой «50 на 50»");
     await shot(page, "banner-" + label + "-question");
+    if (phone) {
+      // все 10 вопросов: 4 варианта и кнопка подсказки над баннером сразу, без прокрутки
+      const slot = await page.getAttribute(".hint-btn", "data-slot");
+      const want = vp.width > vp.height ? "top" : vp.height <= 700 ? "above" : "below";
+      ok(slot === want, label + ": кнопка «50 на 50» — " + ({ top: "в верхней строке", above: "узкой строкой над вариантами", below: "под вариантами" })[want] + " (" + slot + ")");
+      const under = [];
+      for (let i = 0; i < 10; i++) {
+        if (i) { await answer(page, true); await nextQ(page); await page.waitForSelector(".answer"); }
+        const r = await aboveBanner(page, ".answer" + (want === "below" ? "" : ", .hint-btn"));
+        if (r.under.length || r.n < 4) under.push("вопрос " + (i + 1) + ": " + r.under.join(", "));
+        const sz = await page.evaluate(() => ({ q: parseFloat(getComputedStyle(document.querySelector(".question")).fontSize), b: Math.min(...[...document.querySelectorAll(".answer")].map((x) => x.getBoundingClientRect().height)) }));
+        if (sz.q < 20 || sz.b < 52) under.push("вопрос " + (i + 1) + ": шрифт " + sz.q + ", кнопка " + Math.round(sz.b));
+      }
+      ok(!under.length, label + ": на всех 10 вопросах 4 варианта над баннером без прокрутки (шрифт ≥ 20, кнопки ≥ 52) " + JSON.stringify(under.slice(0, 3)));
+      await reload(page, BASE + "?fakeadsec=1&test=ussr");
+      await tap(page, "[data-action='start']");
+      await page.waitForSelector(".hint-btn");
+    }
     await answer(page, false);
     await page.waitForTimeout(500);
     // «Дальше» после ответа сам прокручивается на экран — и не под баннер
@@ -160,9 +190,9 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     await page.waitForSelector(".result__card");
     await bannerClear(page, label + " результат");
     await shot(page, "banner-" + label + "-result");
-    if (vp.width === 360) {
-      const r = await page.evaluate(() => ({ b: document.querySelector("[data-action='share']").getBoundingClientRect().bottom, top: document.querySelector(".fake-banner").getBoundingClientRect().top }));
-      ok(r.b <= r.top + 0.5, label + ": «Поделиться результатом» видно сразу, над баннером (" + Math.round(r.b) + " ≤ " + Math.round(r.top) + ")");
+    if (phone) {
+      const r = await aboveBanner(page, ".result__actions .btn");
+      ok(r.n === 3 && !r.under.length, label + ": все три кнопки результата видно сразу, над баннером " + JSON.stringify(r.under));
     }
     // окно «Поделиться»: баннер убран, закрыли — вернулся
     await tap(page, "[data-action='share']");
@@ -176,7 +206,7 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     await tap(page, "[data-action='start']");
     for (let i = 0; i < 10; i++) {
       await page.waitForSelector(".memorize");
-      if (i === 0 || i === 9) await bannerClear(page, label + " «запомни», вопрос " + (i + 1), true);
+      if (i === 0 || i === 9 || phone) await bannerClear(page, label + " «запомни», вопрос " + (i + 1), true);
       if (i === 9) await shot(page, "banner-" + label + "-memorize");
       await passMemorize(page);
       if (i === 0) ok(await page.locator(".hint-btn").count() === 1, label + ": на «запомни» кнопка подсказки — после картинки, на вопросе");
@@ -277,14 +307,20 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     await tap(page, ".hint-btn"); await page.waitForSelector(".ad-wait");
     await page.keyboard.press("Escape"); await page.waitForTimeout(200);
     ok(await page.locator(".ad-wait").count() === 0 && (await st(page)).phase === "ask", "Esc во время ожидания: ожидание отменено, остались на вопросе");
+    ok(/Вы отменили рекламу/.test(await page.textContent("#toast")), "Esc: сообщение «" + (await page.textContent("#toast")) + "»");
     await tap(page, ".hint-btn"); await page.waitForSelector(".ad-wait");
     await page.goBack(); await page.waitForTimeout(400);
-    ok(await page.locator(".ad-wait").count() === 0 && await page.locator(".test-card").count() > 0, "«назад» во время ожидания: ожидание отменено, открыт список тестов");
-    ok(!(await page.evaluate(() => document.getElementById("toast").classList.contains("show") && /закрыта/.test(document.getElementById("toast").textContent))), "после «назад» устаревшего сообщения нет");
+    ok(await page.locator(".ad-wait").count() === 0 && (await st(page)).phase === "ask" && new URL(page.url()).searchParams.get("test") === "ussr", "«назад» во время ожидания = «Отмена»: ожидание закрыто, остались на вопросе");
+    ok(/Вы отменили рекламу/.test(await page.textContent("#toast")), "«назад»: сообщение «Вы отменили рекламу — подсказки нет»");
+    await tap(page, ".hint-btn"); await page.waitForSelector(".ad-wait");
+    await page.click("[data-action='ad-cancel']"); await page.waitForSelector("#toast.show");
+    ok(/Вы отменили рекламу/.test(await page.textContent("#toast")), "«Отмена»: сообщение «Вы отменили рекламу — подсказки нет»");
     ok(await page.evaluate(() => !QuizApp.adBusy()), "приложение не ждёт рекламу");
+    await page.goBack(); await page.waitForSelector(".test-card", { timeout: 3000 }).catch(() => {});
+    ok(await page.locator(".test-card").count() > 0, "следующий «назад» (до первого ответа) — к списку тестов, без вопроса «Выйти?»");
     const ev = await events(page);
-    ok(ev.filter((e) => e.name === "ad_reward_failed" && e.data.reason === "closed").length === 2, "отметки ad_reward_failed closed (Esc и «назад»)");
-    ok(ev.some((e) => e.name === "progression_failed" && e.data.reason === "back" && e.data.step_index === 1), "progression_failed: бросил на вопросе 1 (back)");
+    ok(ev.filter((e) => e.name === "ad_reward_failed" && e.data.reason === "closed").length === 3, "отметки ad_reward_failed closed (Esc, «назад», «Отмена»)");
+    ok(ev.filter((e) => e.name === "progression_failed").length === 1 && ev.some((e) => e.name === "progression_failed" && e.data.reason === "back" && e.data.step_index === 1), "progression_failed — один раз, когда реально ушёл (вопрос 1)");
     await page.context().close();
   }
 
@@ -335,7 +371,7 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     const s = await st(page);
     const secs = await page.evaluate(() => { const e = document.querySelector(".memorize__secs"); return e ? parseInt(e.textContent, 10) : -1; });
     const want = await page.evaluate(() => QuizApp.state().questions[1].seconds);
-    ok(s.phase === "memorize" && secs >= want - 1, "после рекламы картинка «запомни» показана заново с полным временем (" + secs + " из " + want + " с)");
+    ok(s.phase === "memorize" && secs >= 2 && secs <= want, "после рекламы картинка «запомни» снова на экране, на оставшееся время (" + secs + " из " + want + " с, не меньше 1,5 с)");
     await passMemorize(page);
     ok(await hintApplied(page), "подсказка — на вопросе после картинки");
     await page.context().close();
@@ -348,7 +384,7 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     await page.waitForSelector(".ad-wait");
     await page.click("[data-action='ad-cancel']");
     await page.waitForSelector("#toast.show");
-    ok(/закрыта раньше/.test(await page.textContent("#toast")), "«Отмена» во время ожидания: окно закрылось, сообщение есть");
+    ok(/Вы отменили рекламу/.test(await page.textContent("#toast")), "«Отмена» во время ожидания: окно закрылось, «Вы отменили рекламу — подсказки нет»");
     await page.waitForSelector(".fake-ad", { timeout: 16000 });
     await page.click(".fake-ad-close"); await page.waitForTimeout(300);
     ok(await outCount(page) === 0 && await page.evaluate(() => QuizApp.adGrants()) === 0, "опоздавшая закрыта раньше конца — подсказки нет");
@@ -365,9 +401,151 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     await page.waitForSelector(".test-card");
     await watchFakeAd(page);
     ok(await page.evaluate(() => QuizApp.adGrants()) === 0, "ушёл к списку тестов — опоздавшая подсказка не выдана");
+    ok(/досмотрена.*не пригодилась/.test(await page.textContent("#toast")), "…и сказано почему: «" + (await page.textContent("#toast")) + "»");
     await tap(page, ".test-card[data-test='kino']"); await tap(page, "[data-action='start']");
     await page.waitForSelector(".answer");
     ok(await outCount(page) === 0 && await page.locator(".hint-btn").count() === 1, "в другом тесте подсказка не сработала сама, кнопка «50 на 50» доступна");
+    await page.context().close();
+  }
+
+  console.log("\nСообщения, подсказка, «запомни» после паузы, «Выйти из теста?», клавиатура:");
+  {
+    // Сообщение после неудачной рекламы не закрывает ответы и «Дальше» и пропускает касания
+    const page = await open(browser, BASE + "?fakead=fail&test=kino", { width: 360, height: 640 });
+    await tap(page, "[data-action='start']");
+    await tap(page, ".hint-btn");
+    await page.waitForSelector("#toast.show", { timeout: 6000 });
+    const t = await page.evaluate(() => {
+      const r = document.getElementById("toast").getBoundingClientRect();
+      const a = document.querySelector(".answers").getBoundingClientRect();
+      return { pe: getComputedStyle(document.getElementById("toast")).pointerEvents, overlap: r.bottom > a.top && r.top < a.bottom, top: Math.round(r.top), bottom: Math.round(r.bottom), atop: Math.round(a.top) };
+    });
+    ok(t.pe === "none", "сообщение прозрачно для касаний (pointer-events: none)");
+    ok(!t.overlap, "360×640: сообщение вверху (" + t.top + "–" + t.bottom + "), над вариантами (с " + t.atop + ")");
+    await answer(page, true);
+    await page.waitForTimeout(450);
+    const shown = await page.evaluate(() => document.getElementById("toast").classList.contains("show"));
+    const nr = await page.evaluate(() => { const n = document.querySelector(".next-btn").getBoundingClientRect(); const x = document.getElementById("toast").getBoundingClientRect(); return n.bottom > x.top && n.top < x.bottom; });
+    await page.click(".next-btn");
+    await page.waitForTimeout(200);
+    ok(shown && (await st(page)).idx === 1, "сообщение ещё на экране, а ответ и «Дальше» нажимаются (вопрос 2)" + (nr ? " — сквозь сообщение" : ""));
+    await page.context().close();
+  }
+  for (const vp of [{ width: 360, height: 640 }, { width: 640, height: 360 }, { width: 844, height: 390 }]) {
+    // подсказка сработала — варианты остаются на месте и над баннером
+    const label = vp.width + "×" + vp.height;
+    const page = await open(browser, BASE + "?fakeadsec=1&test=ussr", vp);
+    await tap(page, "[data-action='start']");
+    const pos = () => page.evaluate(() => [...document.querySelectorAll(".answer")].map((b) => Math.round(b.getBoundingClientRect().top)).join(","));
+    const before = await pos();
+    await tap(page, ".hint-btn");
+    await watchFakeAd(page);
+    ok(await hintApplied(page), label + ": подсказка сработала");
+    ok(await pos() === before, label + ": варианты не сдвинулись из-за подсказки (" + before + ")");
+    const r = await aboveBanner(page, ".answer, .hint-note");
+    ok(!r.under.length, label + ": варианты и строка «подсказка» над баннером " + JSON.stringify(r.under));
+    await page.context().close();
+  }
+  {
+    // «Запомни»: пауза (свернули / вкладка скрыта) не даёт полного времени заново
+    const page = await open(browser, BASE + "?test=memory", PHONE);
+    const hide = (v) => page.evaluate((h) => { Object.defineProperty(document, "hidden", { configurable: true, get: () => h }); document.dispatchEvent(new Event("visibilitychange")); }, v);
+    await tap(page, "[data-action='start']");
+    await page.waitForSelector(".memorize");
+    const full = await page.evaluate(() => QuizApp.state().questions[0].seconds);
+    await page.waitForTimeout(1600);
+    await hide(true); await page.waitForTimeout(3000); await hide(false); await page.waitForTimeout(100);
+    const secs = parseInt(await page.textContent(".memorize__secs"), 10);
+    ok((await st(page)).phase === "memorize" && secs <= full - 1 && secs >= 2, "пауза на 3 с через 1,6 с: картинка на оставшееся время (" + secs + " из " + full + " с), а не заново на полное");
+    await page.waitForSelector(".answer", { timeout: (full + 2) * 1000 });
+    ok(true, "…и исчезает, когда оставшееся время вышло");
+    await page.context().close();
+    // пауза перед самым концом — после паузы ещё 1,5 с, чтобы успеть глянуть
+    const p2 = await open(browser, BASE + "?test=memory", PHONE);
+    await tap(p2, "[data-action='start']");
+    await p2.waitForSelector(".memorize");
+    const f2 = await p2.evaluate(() => QuizApp.state().questions[0].seconds);
+    await p2.waitForTimeout(f2 * 1000 - 700);
+    await p2.evaluate(() => { Object.defineProperty(document, "hidden", { configurable: true, get: () => true }); document.dispatchEvent(new Event("visibilitychange")); });
+    await p2.waitForTimeout(2000);
+    await p2.evaluate(() => { Object.defineProperty(document, "hidden", { configurable: true, get: () => false }); document.dispatchEvent(new Event("visibilitychange")); });
+    await p2.waitForTimeout(1000);
+    const ph1 = (await st(p2)).phase;
+    await p2.waitForTimeout(900);
+    const ph2 = (await st(p2)).phase;
+    ok(ph1 === "memorize" && ph2 === "ask", "пауза за 0,7 с до конца: после неё картинка видна ещё ~1,5 с (" + ph1 + " → " + ph2 + ")");
+    await p2.context().close();
+  }
+  {
+    // Выход из теста посреди прохождения — только через «Выйти из теста?»
+    const page = await open(browser, BASE + "?test=ussr", PHONE);
+    await tap(page, "[data-action='start']");
+    await page.waitForSelector(".answer");
+    await page.keyboard.press("Escape");
+    await page.waitForSelector(".test-card", { timeout: 3000 }).catch(() => {});
+    ok(await page.locator(".test-card").count() > 0 && await page.locator(".exit-dialog").count() === 0, "до первого ответа Esc — сразу к списку тестов, без вопроса");
+    await tap(page, ".test-card[data-test='ussr']"); await tap(page, "[data-action='start']");
+    await answer(page, true); await nextQ(page); await page.waitForSelector(".answer");
+    await tap(page, "[data-action='back']");
+    await page.waitForSelector(".exit-dialog");
+    const d = await page.evaluate(() => ({ title: document.querySelector(".exit-dialog__title").textContent, text: document.querySelector(".exit-dialog__text").textContent, size: parseFloat(getComputedStyle(document.querySelector(".exit-dialog__title")).fontSize), focus: document.activeElement.getAttribute("data-action"), first: document.querySelector(".exit-dialog .btn").getAttribute("data-action") }));
+    ok(d.title === "Выйти из теста?" && /Ответы не сохранятся/.test(d.text) && d.size >= 24, "«‹ Тесты» посреди теста: крупно «Выйти из теста? Ответы не сохранятся.» (" + d.size + "px)");
+    ok(d.first === "exit-stay" && d.focus === "exit-stay", "«Остаться» — первая и в фокусе");
+    await page.keyboard.press("1"); await page.waitForTimeout(100);
+    ok(!(await st(page)).answered, "пока окно открыто, клавиши ответов не работают");
+    await page.keyboard.press("Enter"); await page.waitForTimeout(150);
+    ok(await page.locator(".exit-dialog").count() === 0 && (await st(page)).idx === 1 && (await st(page)).phase === "ask", "Enter — «Остаться»: окно закрыто, тот же вопрос 2");
+    await page.keyboard.press("Escape"); await page.waitForSelector(".exit-dialog");
+    await page.keyboard.press("Escape"); await page.waitForTimeout(150);
+    ok(await page.locator(".exit-dialog").count() === 0 && (await st(page)).idx === 1, "Esc спрашивает, второй Esc закрывает окно = остаться");
+    await page.goBack(); await page.waitForTimeout(300);
+    ok(await page.locator(".exit-dialog").count() === 1 && new URL(page.url()).searchParams.get("test") === "ussr", "«назад» браузера посреди теста — тоже вопрос, адрес теста на месте");
+    await page.click("[data-action='exit-stay']"); await page.waitForTimeout(150);
+    await page.goBack(); await page.waitForTimeout(300);
+    ok(await page.locator(".exit-dialog").count() === 1, "после «Остаться» следующий «назад» снова спрашивает, а не выкидывает");
+    let ev = await events(page);
+    ok(ev.filter((e) => e.name === "progression_failed").length === 1, "пока не вышел — новой отметки progression_failed нет");
+    await page.click("[data-action='exit-leave']");
+    await page.waitForSelector(".test-card", { timeout: 3000 }).catch(() => {});
+    ok(await page.locator(".test-card").count() > 0 && new URL(page.url()).searchParams.get("test") === null, "«Выйти» — список тестов, ?test= убран из адреса");
+    ev = await events(page);
+    const pf = ev.filter((e) => e.name === "progression_failed");
+    ok(pf.length === 2 && pf[1].data.step_index === 2 && pf[1].data.reason === "back", "progression_failed — только при реальном выходе (вопрос 2, back)");
+    ok(!page._errors.length, "ошибок в консоли нет " + JSON.stringify(page._errors));
+    await page.context().close();
+  }
+  for (const vp of [{ width: 360, height: 640 }, { width: 320, height: 568 }, { width: 640, height: 360 }]) {
+    const page = await open(browser, BASE + "?test=ussr", vp);
+    const h1 = await page.evaluate(() => [...document.querySelectorAll(".back-btn, .sound-btn")].map((b) => Math.round(b.getBoundingClientRect().height)));
+    await tap(page, "[data-action='start']"); await page.waitForSelector(".answer");
+    const h2 = await page.evaluate(() => [...document.querySelectorAll(".back-btn, .sound-btn")].map((b) => Math.round(b.getBoundingClientRect().height)));
+    ok([...h1, ...h2].every((x) => x >= 56), vp.width + "×" + vp.height + ": «‹ Тесты» и звук — не ниже 56 px (" + [...h1, ...h2].join(", ") + ")");
+    await page.context().close();
+  }
+  {
+    // Клавиатура: стрелки водят по всем карточкам (и до 11-го теста), 0 — десятый тест
+    const page = await open(browser, BASE, { width: 1280, height: 800 }, { touch: false });
+    await settled(page);
+    const n = await page.locator(".test-card").count();
+    const seen = new Set();
+    await page.keyboard.press("ArrowDown"); seen.add(await page.evaluate(() => document.activeElement.getAttribute("data-test")));
+    for (let i = 0; i < n; i++) { await page.keyboard.press(i % 2 ? "ArrowLeft" : "ArrowRight"); seen.add(await page.evaluate(() => document.activeElement.getAttribute("data-test"))); await page.keyboard.press("ArrowDown"); seen.add(await page.evaluate(() => document.activeElement.getAttribute("data-test"))); }
+    ok(seen.size === n, "стрелки доводят фокус до всех " + n + " карточек (" + seen.size + ")");
+    const last = await page.evaluate(() => { const c = [...document.querySelectorAll(".test-card")]; c[c.length - 1].focus(); return c[c.length - 1].getAttribute("data-test"); });
+    await page.keyboard.press("ArrowUp"); await page.keyboard.press("ArrowDown");
+    ok(await page.evaluate(() => document.activeElement.getAttribute("data-test")) === last, "стрелки вверх-вниз возвращаются на последнюю карточку");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector("[data-action='start']");
+    ok(new URL(page.url()).searchParams.get("test") === last, "Enter на 11-й карточке открывает «" + last + "»");
+    await page.goBack(); await page.waitForSelector(".test-card");
+    await settled(page);
+    const tenth = await page.evaluate(() => document.querySelectorAll(".test-card")[9].getAttribute("data-test"));
+    ok(await page.textContent(".test-card[data-test='" + tenth + "'] .test-card__key") === "0", "на 10-й карточке подсказка клавиши «0»");
+    await page.keyboard.press("0");
+    await page.waitForSelector("[data-action='start']");
+    ok(new URL(page.url()).searchParams.get("test") === tenth, "клавиша 0 открывает 10-й тест «" + tenth + "»");
+    await reload(page, BASE + "?test=memory");
+    ok(/новые картинки/.test(await page.textContent(".intro__card")), "заставка «Проверь память»: «Каждый раз — новые картинки»");
     await page.context().close();
   }
 
@@ -575,6 +753,8 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     await tap(page, "[data-action='start']");
     await answer(page, true); await nextQ(page); await answer(page, false); await nextQ(page);
     await tap(page, "[data-action='back']");
+    await page.waitForSelector("[data-action='exit-leave']");
+    await page.click("[data-action='exit-leave']");
     await page.waitForSelector(".test-card");
     await tap(page, ".test-card[data-test='songs']");
     await tap(page, "[data-action='start']");

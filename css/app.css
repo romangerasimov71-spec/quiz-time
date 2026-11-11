@@ -54,8 +54,8 @@ button:disabled { cursor: default; }
   border: 0;
   background: rgba(255, 255, 255, 0.75);
   border-radius: 14px;
-  min-width: 52px;
-  min-height: 52px;
+  min-width: 56px;
+  min-height: 56px;   /* «‹ Тесты» и звук: палец 40+ попадает с первого раза */
   padding: 6px 12px;
   font-size: 24px;
   line-height: 1;
@@ -267,9 +267,42 @@ button:disabled { cursor: default; }
   font-size: 20px; font-weight: 900; line-height: 1;
 }
 .hint-note { margin: 12px 2px 0; font-size: 18px; font-weight: 700; color: var(--ink-soft); text-align: center; }
+/* невысокий экран: узкая строка над вариантами (справа, чтобы не путать с вариантом ответа) */
+.hint-btn--above {
+  width: -webkit-fit-content; width: fit-content; min-height: 48px; margin: 0 0 10px auto;
+  padding: 6px 14px 6px 8px; font-size: 18px; border-width: 2px; border-radius: 14px;
+}
+.hint-btn--above .hint-btn__icon, .hint-btn--top .hint-btn__icon { width: 30px; height: 30px; font-size: 18px; }
+.hint-note--above { margin: 0 2px 10px; min-height: 48px; display: flex; align-items: center; justify-content: flex-end; font-size: 17px; }
+/* телефон в альбоме: в верхней строке, между «Вопрос N из 10» и звуком */
+.hint-btn--top {
+  flex: none; width: auto; min-height: 56px; margin: 0;
+  padding: 4px 12px 4px 8px; font-size: 18px; border-width: 2px; border-radius: 14px;
+}
+.hint-note--top { flex: none; margin: 0; font-size: 16px; max-width: 150px; text-align: right; line-height: 1.2; }
 /* убранный подсказкой вариант: пустое место той же формы (кнопки не прыгают) */
 .answer.is-out { background: transparent; border-style: dashed; border-color: rgba(0, 0, 0, 0.12); box-shadow: none; }
 .answer.is-out .answer__text, .answer.is-out .answer__key { visibility: hidden; }
+
+/* ---------- окно «Выйти из теста?» ---------- */
+.exit-dialog {
+  position: fixed; inset: 0;
+  z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  background: rgba(30, 20, 10, 0.6);
+}
+.exit-dialog__box {
+  width: 100%; max-width: 380px;
+  display: grid; gap: 12px;
+  padding: 22px 18px 18px;
+  border-radius: 24px;
+  background: var(--card);
+  text-align: center;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+}
+.exit-dialog__title { margin: 0; font-size: 26px; font-weight: 900; line-height: 1.2; }
+.exit-dialog__text { margin: 0 0 6px; font-size: 20px; color: var(--ink-soft); }
 
 /* ---------- окно «Загружаем рекламу…» ---------- */
 .ad-wait {
@@ -354,6 +387,43 @@ button:disabled { cursor: default; }
 }
 @keyframes shrink { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 .memorize .btn { max-width: 420px; margin: 0 auto; }
+
+/* ---------- «уплотнение», если главное не помещается над баннером (ступени ставит js) ---------- */
+.quiz.fit-1 .topbar { margin-bottom: 10px; }
+.quiz.fit-1 .progress { margin-top: 6px; height: 10px; }
+.quiz.fit-1 .topbar__test { display: none; }
+.quiz.fit-1 .question { font-size: 22px; line-height: 1.25; margin-bottom: 12px; }
+.quiz.fit-1 .answers { gap: 10px; }
+.quiz.fit-1 .answer { min-height: 56px; padding: 8px 14px; font-size: 20px; }
+.quiz.fit-1 .answer--tile { min-height: 76px; }
+.quiz.fit-1 .answer--tile .answer__text { font-size: 42px; }
+.quiz.fit-1 .memorize__title { margin: 0; font-size: 24px; }
+.quiz.fit-1 .memorize__hint { margin-bottom: 10px; font-size: 18px; }
+.quiz.fit-1 .memorize .mem-grid { gap: 8px; margin-bottom: 12px; }
+.quiz.fit-1 .memorize .timer { height: 12px; margin-bottom: 12px; }
+.quiz.fit-1 .memorize .btn { min-height: 56px; font-size: 20px; }
+.quiz.fit-2 { margin-top: -4px; }
+.quiz.fit-2 .topbar { margin-bottom: 8px; }
+.quiz.fit-2 .question { font-size: 20px; margin: 0 2px 8px; }
+.quiz.fit-2 .answers { gap: 8px; }
+.quiz.fit-2 .answer { min-height: 52px; padding: 6px 12px; font-size: 19px; line-height: 1.2; }
+.quiz.fit-2 .answer--tile { min-height: 64px; }
+.quiz.fit-2 .answer--tile .answer__text { font-size: 36px; }
+.quiz.fit-2 .hint-btn--above, .quiz.fit-2 .hint-note--above { min-height: 44px; margin-bottom: 8px; }
+.result.fit-1 .result__top { margin-bottom: 8px; }
+.result.fit-1 .result__card { padding: 12px 14px; }
+.result.fit-1 .result__num { font-size: 60px; }
+.result.fit-1 .result__score { font-size: 26px; }
+.result.fit-1 .result__rank { font-size: 20px; margin-top: 4px !important; padding: 4px 12px; }
+.result.fit-1 .result__text { font-size: 18px; margin-top: 6px !important; line-height: 1.3; }
+.result.fit-1 .result__best { font-size: 16px; margin-top: 4px !important; }
+.result.fit-1 .result__actions { gap: 8px; margin-top: 10px; }
+.result.fit-1 .btn--primary { min-height: 56px; font-size: 20px; }
+.result.fit-1 .btn--light { min-height: 52px; font-size: 20px; }
+/* ещё ниже: «Пройти ещё раз» и «Другие тесты» — рядом, в одну строку */
+.result.fit-2 .result__actions { grid-template-columns: 1fr 1fr; }
+.result.fit-2 .result__actions .btn--primary { grid-column: 1 / -1; }
+.result.fit-2 .btn--light { font-size: 18px; padding: 6px 8px; line-height: 1.15; min-height: 56px; }
 
 /* ---------- результат ---------- */
 body.on-result, body.on-intro { background: linear-gradient(160deg, var(--c1), var(--c2)) fixed; }
@@ -452,11 +522,14 @@ body.on-result, body.on-intro { background: linear-gradient(160deg, var(--c1), v
 }
 
 /* ---------- всплывающая подсказка ---------- */
+/* Вверху, под строкой «Вопрос N из 10» (top ставит js), и сквозь него можно нажимать:
+   оно не закрывает ответы, «Дальше» и «Узнать результат» и не перехватывает касания. */
 .toast {
   position: fixed;
   left: 50%;
-  bottom: calc(max(20px, env(safe-area-inset-bottom)) + var(--banner-h, 0px));
-  transform: translate(-50%, 20px);
+  top: max(12px, env(safe-area-inset-top));
+  transform: translate(-50%, -12px);
+  pointer-events: none;
   width: calc(100% - 32px);
   max-width: 520px;
   padding: 14px 18px;
@@ -516,6 +589,12 @@ body.on-result, body.on-intro { background: linear-gradient(160deg, var(--c1), v
   .answers--tiles { grid-template-columns: repeat(4, 1fr); }
   .answer--tile { min-height: 80px; }
   .answer--tile .answer__text { font-size: 42px; }
+  /* не помещается над баннером даже уплотнённым — вопрос слева, варианты справа */
+  .quiz.fit-3 .ask { display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); gap: 0 14px; align-items: start; }
+  .quiz.fit-3 .question { grid-column: 1; grid-row: 1 / span 3; margin: 0; }
+  .quiz.fit-3 .answers, .quiz.fit-3 .hint-btn--above, .quiz.fit-3 .hint-note--above, .quiz.fit-3 .hint-btn--below, .quiz.fit-3 .hint-note--below { grid-column: 2; }
+  .quiz.fit-3 .feedback { grid-column: 1 / -1; }
+  .quiz.fit-3 .answer { padding: 6px 10px; font-size: 18px; }
   /* «Запомни» в альбоме: картинка слева (размер по высоте экрана), таймер и «Готово» справа */
   .memorize { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto auto 1fr; gap: 0 20px; align-items: start; text-align: left; }
   .memorize .mem-grid {
@@ -554,7 +633,7 @@ body.on-result, body.on-intro { background: linear-gradient(160deg, var(--c1), v
   .home__logo { width: 44px; height: 44px; font-size: 28px; border-radius: 14px; }
   .home__title { font-size: 26px; }
   .home__sub { font-size: 17px; }
-  .icon-btn { min-width: 46px; min-height: 46px; padding: 4px 8px; font-size: 20px; }
+  .icon-btn { min-width: 50px; min-height: 56px; padding: 4px 8px; font-size: 20px; }
   .back-btn { font-size: 17px; }
   .topbar__count { font-size: 17px; }
   .test-card { gap: 10px; padding: 12px; }

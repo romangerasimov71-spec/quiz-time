@@ -28,6 +28,9 @@ async function startTest(page, id) {
 async function toHome(page) {
   await settled(page);
   await page.click('[data-action="back"]');
+  // посреди теста (после первого ответа) сначала спрашивают «Выйти из теста?» — выходим
+  await page.waitForSelector('.test-card, [data-action="exit-leave"]');
+  if (await page.locator('[data-action="exit-leave"]').count()) await page.click('[data-action="exit-leave"]');
   await page.waitForSelector('.test-card');
 }
 

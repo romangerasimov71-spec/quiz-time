@@ -7,7 +7,8 @@
    прохождения и получает обычный вопрос «запомни»:
      { type: 'memory', kind, show: [...], cols, seconds, q, a: [верный, ...] }
    Элемент show: эмодзи, '' (пустая клетка) или { color: '#rrggbb', name } (цветной кружок).
-   kind — шаблон вопроса (по нему tools/check.js проверяет, что ответ верный). */
+   layout — раскладка картинки (на каждом шаге своя, как раньше); kind — какой вопрос задан
+   к ней в этот раз (по нему tools/check.js проверяет, что верный ответ посчитан по показанному). */
 (function () {
   // Наборы картинок. Только старые эмодзи (2010 года) — их показывают даже старые телефоны.
   var SETS = {
@@ -26,7 +27,8 @@
   var COLORS = [
     { color: '#e53935', name: 'Красного' }, { color: '#fdd835', name: 'Жёлтого' },
     { color: '#43a047', name: 'Зелёного' }, { color: '#1e88e5', name: 'Синего' },
-    { color: '#8e24aa', name: 'Фиолетового' }, { color: '#212121', name: 'Чёрного' }
+    { color: '#8e24aa', name: 'Фиолетового' }, { color: '#212121', name: 'Чёрного' },
+    { color: '#fb8c00', name: 'Оранжевого' }, { color: '#a1662f', name: 'Коричневого' }
   ];
 
   function rnd(n) { return Math.floor(Math.random() * n); }
@@ -36,87 +38,134 @@
     return a;
   }
   function pick(arr, n) { return shuffle(arr).slice(0, n); }
-  function pickSet(except) {
-    var names = Object.keys(SETS).filter(function (k) { return k !== except; });
+  function one(arr) { return arr[rnd(arr.length)]; }
+  // Набор, в котором хватает картинок на показ и на неверные варианты (need штук)
+  function pickSet(need) {
+    var names = Object.keys(SETS).filter(function (k) { return SETS[k].length >= (need || 0); });
     return SETS[names[rnd(names.length)]];
   }
 
-  // «Чего не было?» — n разных предметов; верный — тот, которого не показали
-  function missing(n, cols, seconds) {
+  /* Решение Романа 11 ноя: к одной и той же раскладке задаём случайно один из нескольких
+     равных по трудности вопросов — чтобы по картинке нельзя было заранее понять, что спросят
+     (и запоминать одну клетку). Раскладки, порядок и трудность шагов — прежние.
+     layout — раскладка (одна на шаг), kind — какой вопрос задан (по нему tools/check.js
+     проверяет, что верный ответ посчитан по показанному). */
+  function q(layout, kind, show, cols, seconds, text, a, extra) {
+    var out = { type: 'memory', layout: layout, kind: kind, show: show, cols: cols, seconds: seconds, q: text, a: a };
+    for (var k in extra || {}) out[k] = extra[k];
+    return out;
+  }
+  // «Чего не было?»: верный — не показанный; неверные — три показанных
+  function askMissing(layout, shown, pool, cols, seconds) {
+    var uniq = shown.filter(function (x, i) { return x !== '' && shown.indexOf(x) === i; });
+    var absent = pool.filter(function (x) { return uniq.indexOf(x) < 0; });
+    return q(layout, 'missing', shown, cols, seconds, 'Чего не было?', [one(absent)].concat(pick(uniq, 3)));
+  }
+  // «Что было на картинке?»: верный — показанный; неверные — три не показанных
+  function askPresent(layout, shown, pool, cols, seconds) {
+    var uniq = shown.filter(function (x, i) { return x !== '' && shown.indexOf(x) === i; });
+    var absent = pool.filter(function (x) { return uniq.indexOf(x) < 0; });
+    return q(layout, 'present', shown, cols, seconds, 'Что было на картинке?', [one(uniq)].concat(pick(absent, 3)));
+  }
+  // «Кто/что был(о) <место>?»: верный — клетка at; неверные — другие показанные (не хватает — не показанные)
+  function askAt(layout, shown, pool, cols, seconds, at, text) {
+    var others = shown.filter(function (x, i) { return i !== at && x !== ''; });
+    var wrong = pick(others, 3);
+    if (wrong.length < 3) wrong = wrong.concat(pick(pool.filter(function (x) { return shown.indexOf(x) < 0; }), 3 - wrong.length));
+    return q(layout, 'pos', shown, cols, seconds, text, [shown[at]].concat(wrong), { at: at });
+  }
+
+  // n разных предметов в ряд или сеткой: «чего не было» / «что было»
+  //   (3 в ряд — ещё и «кто слева / посередине / справа»)
+  function lineup(layout, n, cols, seconds, setName) {
     return { make: function () {
-      var items = pick(pickSet(), n + 1);
-      var shown = items.slice(0, n);
-      return { type: 'memory', kind: 'missing', show: shown, cols: cols, seconds: seconds,
-        q: 'Чего не было?', a: [items[n]].concat(pick(shown, 3)) };
+      var pool = setName ? SETS[setName] : pickSet(n + 3);
+      var shown = pick(pool, n);
+      var who = setName === 'animals' ? 'Кто был ' : 'Что было ';
+      var asks = [
+        function () { return askMissing(layout, shown, pool, cols, seconds); },
+        function () { return askPresent(layout, shown, pool, cols, seconds); }
+      ];
+      if (n === 3) {
+        asks.push(function () { return askAt(layout, shown, pool, cols, seconds, 0, who + 'слева?'); });
+        asks.push(function () { return askAt(layout, shown, pool, cols, seconds, 1, who + 'посередине?'); });
+        asks.push(function () { return askAt(layout, shown, pool, cols, seconds, 2, who + 'справа?'); });
+      }
+      var out = one(asks)();
+      if (setName === 'animals' && out.kind === 'present') out.q = 'Кто был на картинке?';
+      return out;
     } };
   }
 
-  // «Кто был посередине?» — 3 в ряд
-  function middle(seconds) {
+  // n цветных кружков: «какого цвета НЕ было» / «кружок какого цвета был»
+  function colors(n, seconds) {
     return { make: function () {
-      var items = pick(SETS.animals, 4);
-      var shown = items.slice(0, 3);
-      return { type: 'memory', kind: 'middle', show: shown, cols: 3, seconds: seconds,
-        q: 'Кто был посередине?', a: [shown[1], shown[0], shown[2], items[3]] };
+      var shown = pick(COLORS, n);
+      var absent = COLORS.filter(function (c) { return shown.indexOf(c) < 0; });
+      var name = function (c) { return c.name; };
+      if (rnd(2)) return q('colors', 'color-missing', shown, n, seconds, 'Какого цвета НЕ было?', [one(absent).name].concat(pick(shown, 3).map(name)));
+      return q('colors', 'color-present', shown, n, seconds, 'Кружок какого цвета был на картинке?', [one(shown).name].concat(pick(absent, 3).map(name)));
     } };
   }
 
-  // «Какого цвета НЕ было?» — n цветных кружков
-  function colorMissing(n, seconds) {
-    return { make: function () {
-      var cs = pick(COLORS, n + 1);
-      var shown = cs.slice(0, n);
-      return { type: 'memory', kind: 'color-missing', show: shown, cols: n, seconds: seconds,
-        q: 'Какого цвета НЕ было?', a: [cs[n].name].concat(pick(shown, 3).map(function (c) { return c.name; })) };
-    } };
-  }
-
-  // «Сколько было …?» — n предметов, из них k одинаковых
-  function count(n, cols, seconds, kMin, kMax) {
+  // n предметов, из них k одинаковых (остальные — разные): «сколько было …» / «чего было
+  // больше всего» / «чего не было»
+  function count(layout, n, cols, seconds, kMin, kMax) {
     return { make: function () {
       var target = COUNTABLE[rnd(COUNTABLE.length)];
       var k = kMin + rnd(kMax - kMin + 1);
-      var fill = FILLERS.filter(function (f) { return f !== target.e; });
-      var items = [];
+      var fill = pick(FILLERS.filter(function (f) { return f !== target.e; }), n - k);
+      var items = fill.slice();
       for (var i = 0; i < k; i++) items.push(target.e);
-      for (var j = 0; j < n - k; j++) items.push(fill[rnd(fill.length)]);
       var shown = shuffle(items);
+      var pool = FILLERS.concat(COUNTABLE.map(function (c) { return c.e; }));
+      pool = pool.filter(function (x, i) { return pool.indexOf(x) === i; });
+      var v = rnd(3);
+      if (v === 1) {
+        var wrongMost = fill.slice(0, 3);
+        if (wrongMost.length < 3) wrongMost = wrongMost.concat(pick(pool.filter(function (x) { return shown.indexOf(x) < 0; }), 3 - wrongMost.length));
+        return q(layout, 'most', shown, cols, seconds, 'Чего было больше всего?', [target.e].concat(wrongMost));
+      }
+      if (v === 2) return askMissing(layout, shown, pool, cols, seconds);
       // Неверные варианты — соседние числа
       var wrong = [k - 1, k + 1, k + 2, k - 2].filter(function (x) { return x >= 1 && x <= n + 1; }).slice(0, 3);
-      return { type: 'memory', kind: 'count', target: target.e, show: shown, cols: cols, seconds: seconds,
-        q: 'Сколько было ' + target.name + '?', a: [String(k)].concat(wrong.map(String)) };
+      return q(layout, 'count', shown, cols, seconds, 'Сколько было ' + target.name + '?', [String(k)].concat(wrong.map(String)), { target: target.e });
     } };
   }
 
-  // «Что было в центре?» — крест из 5 клеток в сетке 3×3
-  function center(seconds) {
+  // Крест из 5 клеток в сетке 3×3: что было в центре / сверху / снизу / слева / справа
+  function cross(seconds) {
     return { make: function () {
-      var items = pick(pickSet(), 5);
-      var c = items[0];
-      var around = items.slice(1);
-      var show = ['', around[0], '', around[1], c, around[2], '', around[3], ''];
-      return { type: 'memory', kind: 'center', show: show, cols: 3, seconds: seconds,
-        q: 'Что было в центре?', a: [c].concat(pick(around, 3)) };
+      var pool = pickSet(8);
+      var items = pick(pool, 5);
+      var show = ['', items[1], '', items[2], items[0], items[3], '', items[4], ''];
+      var places = [[4, 'Что было в центре?'], [1, 'Что было сверху?'], [7, 'Что было снизу?'], [3, 'Что было слева?'], [5, 'Что было справа?']];
+      var p = one(places);
+      return askAt('cross', show, pool, 3, seconds, p[0], p[1]);
     } };
   }
 
-  // «Кто был последним, справа?» — n в ряд
-  function last(n, seconds) {
+  // n в ряд (морские жители): кто первый слева / посередине / последний справа
+  function row(n, seconds) {
     return { make: function () {
       var shown = pick(SETS.water, n);
-      return { type: 'memory', kind: 'last', show: shown, cols: n, seconds: seconds,
-        q: 'Кто был последним, справа?', a: [shown[n - 1]].concat(pick(shown.slice(0, n - 1), 3)) };
+      var places = [[0, 'Кто был первым, слева?'], [Math.floor(n / 2), 'Кто был посередине?'], [n - 1, 'Кто был последним, справа?']];
+      var p = one(places);
+      return askAt('row' + n, shown, SETS.water, n, seconds, p[0], p[1]);
     } };
   }
 
-  // «Что было два раза?» — n клеток, один предмет повторяется
+  // n клеток, один предмет повторяется: «что было два раза» / «чего не было» / «что было»
   function twice(n, cols, seconds) {
     return { make: function () {
-      var uniq = pick(pickSet(), n - 1);
+      var pool = pickSet(n + 3);
+      var uniq = pick(pool, n - 1);
       var dup = uniq[0];
       var shown = shuffle(uniq.concat([dup]));
-      return { type: 'memory', kind: 'twice', show: shown, cols: cols, seconds: seconds,
-        q: 'Что было два раза?', a: [dup].concat(pick(uniq.slice(1), 3)) };
+      var v = rnd(3);
+      if (v === 1) return askMissing('twice', shown, pool, cols, seconds);
+      if (v === 2) return askPresent('twice', shown, pool, cols, seconds);
+      return q('twice', 'twice', shown, cols, seconds, 'Что было два раза?', [dup].concat(pick(uniq.slice(1), 3)));
     } };
   }
 
@@ -130,16 +179,16 @@
     color2: '#007c8a',
     keepOrder: true, // лестница сложности: порядок вопросов не перемешиваем
     questions: [
-      missing(3, 3, 4),        // 3 предмета
-      middle(4),               // 3
-      colorMissing(4, 5),      // 4
-      missing(4, 4, 5),        // 4
-      count(5, 5, 5, 2, 3),    // 5
-      center(6),               // 5
-      last(5, 6),              // 5
-      missing(6, 3, 7),        // 6
-      twice(6, 3, 7),          // 6
-      count(7, 4, 8, 3, 5)     // 7
+      lineup('row3', 3, 3, 4),            // 3 предмета в ряд
+      lineup('row3-animals', 3, 3, 4, 'animals'), // 3 зверя в ряд
+      colors(4, 5),                       // 4 кружка
+      lineup('row4', 4, 4, 5),            // 4 в ряд
+      count('count5', 5, 5, 5, 2, 3),     // 5 в ряд, 2–3 одинаковых
+      cross(6),                           // 5 крестом в сетке 3×3
+      row(5, 6),                          // 5 в ряд
+      lineup('grid6', 6, 3, 7),           // 6 сеткой 3×2
+      twice(6, 3, 7),                     // 6, один два раза
+      count('count7', 7, 4, 8, 3, 5)      // 7, из них 3–5 одинаковых
     ],
     ranks: [
       { min: 0, title: 'Рассеянный с улицы Бассейной', text: 'Ничего страшного — память можно тренировать!' },

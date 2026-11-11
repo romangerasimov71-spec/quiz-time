@@ -229,14 +229,24 @@ function checkMemoryQuestion(q, where) {
   switch (q.kind) {
     case 'missing':
       check(cnt(a[0]) === 0 && a.slice(1).every((x) => cnt(x) > 0), where, `«чего не было»: ответ ${a[0]} был на картинке, или неверные варианты не с картинки`); break;
+    case 'present':
+      check(cnt(a[0]) > 0 && a.slice(1).every((x) => cnt(x) === 0), where, `«что было»: ответа ${a[0]} не было на картинке, или неверный вариант был на ней`); break;
     case 'color-missing':
       check(cnt(a[0]) === 0 && a.slice(1).every((x) => cnt(x) > 0), where, `«какого цвета не было»: ответ ${a[0]} неверен`); break;
-    case 'middle':
-      check(q.show.length === 3 && a[0] === q.show[1], where, `«посередине»: ${a[0]} не в середине`); break;
-    case 'center':
-      check(q.show.length === 9 && a[0] === q.show[4], where, `«в центре»: ${a[0]} не в центре`); break;
-    case 'last':
-      check(a[0] === q.show[q.show.length - 1] && a.slice(1).every((x) => cnt(x) === 1), where, `«последний справа»: ${a[0]} не последний`); break;
+    case 'color-present':
+      check(cnt(a[0]) > 0 && a.slice(1).every((x) => cnt(x) === 0), where, `«кружок какого цвета был»: ответ ${a[0]} неверен`); break;
+    case 'pos': {
+      // место в вопросе ↔ клетка q.at: слева/первым — 0, справа/последним — последняя, посередине — средняя,
+      // в кресте 3×3: центр 4, сверху 1, снизу 7, слева 3, справа 5
+      const n = q.show.length, cross = q.layout === 'cross';
+      const want = /в центре/.test(q.q) ? 4 : /сверху/.test(q.q) ? 1 : /снизу/.test(q.q) ? 7
+        : /слева/.test(q.q) ? (cross ? 3 : 0) : /справа/.test(q.q) ? (cross ? 5 : n - 1) : /посередине/.test(q.q) ? Math.floor(n / 2) : -1;
+      check(q.at === want && a[0] === q.show[q.at] && a.slice(1).every((x) => x !== q.show[q.at]), where, `«${q.q}»: ответ ${a[0]}, а в этой клетке ${q.show[want]}`); break;
+    }
+    case 'most': {
+      const others = [...new Set(keys)].filter((k) => k !== a[0]);
+      check(others.every((k) => cnt(k) < cnt(a[0])) && a.slice(1).every((x) => cnt(x) < cnt(a[0])), where, `«чего больше всего»: ${a[0]} — ${cnt(a[0])} раз(а), не больше всех`); break;
+    }
     case 'twice':
       check(cnt(a[0]) === 2 && a.slice(1).every((x) => cnt(x) === 1), where, `«два раза»: ${a[0]} встречается ${cnt(a[0])} раз`); break;
     case 'count':
@@ -288,12 +298,16 @@ async function checkIntro(page, vp, test, where) {
     title: (document.querySelector('.intro__title') || {}).textContent,
     count: (document.querySelector('.intro__count') || {}).textContent,
     fresh: !!document.querySelector('.intro__fresh'),
+    freshText: (document.querySelector('.intro__fresh') || {}).textContent || '',
     text: (document.querySelector('.intro__text') || {}).textContent,
     emoji: (document.querySelector('.intro__emoji') || {}).textContent
   }));
   check(info.title === test.title, where, `заставка: название «${info.title}»`);
   check(info.count === `${runLen(test)} вопросов`, where, `заставка: «${info.count}», ожидалось «${runLen(test)} вопросов»`);
-  check(info.fresh === pooled(test), where, `заставка: строка «Каждый раз — новые вопросы» ${info.fresh ? 'есть у теста без запаса' : 'не показана'}`);
+  // тест с запасом — «Каждый раз — новые вопросы»; «Проверь память» (картинки создаются заново) — «…новые картинки»
+  const generated = test.questions.some((q) => q.make);
+  const wantFresh = generated ? 'Каждый раз — новые картинки' : pooled(test) ? 'Каждый раз — новые вопросы' : '';
+  check(info.freshText === wantFresh, where, `заставка: строка «${info.freshText}», ожидалась «${wantFresh}»`);
   check(info.emoji === test.emoji && info.text && info.text.length > 10, where, 'заставка: нет эмодзи или строки о тесте');
   check(testParam(page) === test.id, where, `в адресе нет ?test=${test.id}`);
   await auditContrast(page, where + '/заставка');
@@ -552,7 +566,8 @@ async function runViewport(browser, base, vp, tests, downloadsDir) {
   const chips = await page.$$eval('.test-card .chip', (els) => els.map((e) => e.textContent));
   check(chips.length === tests.length && chips.every((c, i) => c === `${runLen(tests[i])} вопросов`), vp.short, `на карточках число вопросов: ${chips.join(', ')}`);
   const keyHints = await page.$$eval('.test-card__key', (els) => els.map((e) => e.textContent));
-  check(keyHints.length === Math.min(9, tests.length), vp.short, `подсказок клавиш на карточках ${keyHints.length}, нужно ${Math.min(9, tests.length)}`);
+  const wantKeys = Array.from({ length: Math.min(10, tests.length) }, (x, i) => String((i + 1) % 10));   // 1–9 и 0 — десятый
+  check(JSON.stringify(keyHints) === JSON.stringify(wantKeys), vp.short, `подсказки клавиш на карточках «${keyHints.join(' ')}», нужно «${wantKeys.join(' ')}»`);
   check(!(await page.$('.chip--best')), vp.short, 'на чистом запуске уже показан лучший результат');
   await noHorizontalScroll(page, vp.short);
   await shot(page, `${vp.short}-home`);
@@ -701,6 +716,15 @@ async function extraChecks(browser, base, tests, port) {
         }));
         const firstShows = new Set(runs.map((r) => JSON.stringify(r[0].show)));
         check(firstShows.size >= 10, 'повтор/memory', `первый вопрос почти не меняется: вариантов ${firstShows.size} из 40`);
+        // Решение Романа 11 ноя: раскладка на каждом шаге та же, а вопрос к ней — разный
+        // (по картинке нельзя заранее понять, что спросят); верный ответ — по показанному (выше)
+        const layouts = runs[0].map((q) => q.layout);
+        for (let i = 0; i < layouts.length; i++) {
+          check(runs.every((r) => r[i].layout === layouts[i] && r[i].seconds === runs[0][i].seconds && r[i].cols === runs[0][i].cols), 'повтор/memory', `шаг ${i + 1}: раскладка, время или число колонок меняются`);
+          const asked = new Set(runs.map((r) => r[i].q.replace(/^Сколько было .*$/, 'Сколько было …?')));
+          check(asked.size >= 2, 'повтор/memory', `шаг ${i + 1} (${layouts[i]}): за 40 прохождений к раскладке задавали только «${[...asked].join('», «')}»`);
+        }
+        console.log('  «запомни»: к одной раскладке — разные вопросы: ' + layouts.map((l, i) => l + ' ×' + new Set(runs.map((r) => r[i].kind + r[i].q)).size).join(', '));
       }
     }
     console.log('  повтор: «запомни» каждый раз новые (ответы верны по картинке), обычные вопросы перемешаны внутри половин');
@@ -933,8 +957,8 @@ async function extraChecks(browser, base, tests, port) {
     const kinds = new Set();
     for (let i = 0; i < 10; i++) {
       await page.waitForSelector('.memorize .mem-grid');
-      const q = await page.evaluate(() => { const s = window.QuizApp.state(); const x = s.questions[s.idx]; return { kind: x.kind, n: x.show.length, cols: x.cols }; });
-      kinds.add(q.kind);
+      const q = await page.evaluate(() => { const s = window.QuizApp.state(); const x = s.questions[s.idx]; return { kind: x.layout + '/' + x.kind, layout: x.layout, n: x.show.length, cols: x.cols }; });
+      kinds.add(q.layout);
       for (const p of await memGeometry(page, '.memorize')) fail(tag, `вопрос ${i + 1} (${q.kind}, ${q.n} кл., ${q.cols} в ряд), картинка: ${p}`);
       if (i === 2 || i === 4 || i === 5 || i === 9) await shot(page, `mem${size.width}-q${i + 1}`);
       await page.waitForSelector('[data-action="ready"]:not([disabled])');
@@ -945,7 +969,7 @@ async function extraChecks(browser, base, tests, port) {
       if (i === 2 || i === 4) await shot(page, `mem${size.width}-q${i + 1}-feedback`);
       await press(page, '.next-btn', 'touch');
     }
-    check(kinds.size >= 7, tag, `проверены не все шаблоны: ${[...kinds].join(', ')}`);
+    check(kinds.size === 10, tag, `проверены не все раскладки: ${[...kinds].join(', ')}`);
     await page.waitForSelector('.result__card');
     await ctx.close();
   }

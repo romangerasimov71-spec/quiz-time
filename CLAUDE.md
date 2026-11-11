@@ -56,4 +56,16 @@ GitHub Pages публикуется с ветки `gh-pages` (копия `main`)
 - Тесты — отдельные файлы данных, чтобы новый тест добавлялся без правки движка.
 - Подробности прототипа — `docs/PROTOTYPE.md`.
 - Формат тестов и как добавить новый — `docs/TESTS.md`.
-- Автопроверка в браузере: `node tools/check.js` (нужен Playwright с Chromium).
+- Площадка (общий шаблон студии из «Сонника», логики викторин там нет): `config.js` (адреса
+  приложения ВК/ОК для «Поделиться» — пока пустые, версия, место под баннер, 1 подсказка за тест),
+  `platform.js` (Playgama Bridge: хранилище, реклама за награду, баннер, «поделиться» ВК/ОК),
+  `analytics.js` (статистика), `playgama-bridge.js` + `playgama-bridge-config.json` (rewarded `hint`,
+  баннер `bottom`). Подробно — `docs/PLATFORM.md`; список отметок статистики — `docs/analytics.md`.
+- Движок: `js/app.js` (экраны, «50 на 50» за рекламу, баннер, отметки), `js/storage.js` (рекорды,
+  «какие вопросы были», звук — через Bridge, запасное localStorage, ключи `quiz-time:…`),
+  `js/share.js` («Поделиться»: ВК/ОК, наше окно, системное меню), `js/sound.js`.
+- Автопроверка в браузере: `node tools/check.js` (движок и тесты, ~10 мин),
+  `node tools/check-platform.js` (баннер, подсказка во всех случаях рекламы, хранилище, ВК/ОК,
+  статистика, ~8 мин), набор рекламы студии `tools/ads-test/` + `tools/ads-adapter.js` (запуск — в
+  адаптере). Нужен Playwright с Chromium: `NODE_PATH=/opt/node-tools/node_modules node tools/<файл>.js`.
+- Имитация рекламы на GitHub Pages: `?fakead=cancel|fail|silent|late`, `?fakeadsec=1`, `?nobanner`.

@@ -855,12 +855,14 @@ async function extraChecks(browser, base, tests, port) {
     const ctx = await newContext(browser, phoneVp);
     const page = await ctx.newPage();
     attachErrorWatch(page, 'ссылка');
-    await page.goto(base + 'index.html?vk_app_id=1&test=' + regular.id);
+    // чужой параметр в адресе (как метка источника от площадки); vk_app_id сюда не ставим:
+    // по нему Playgama Bridge решает, что он во ВК, и грузит VK SDK из интернета
+    await page.goto(base + 'index.html?utm_source=vk&test=' + regular.id);
     await checkIntro(page, { short: 'ссылка' }, regular, 'ссылка');
     await page.evaluate(() => history.back());
     await page.waitForSelector('.test-card', { timeout: 3000 }).catch(() => fail('ссылка', '«назад» с заставки по ссылке не открыл список тестов'));
     check(testParam(page) === null, 'ссылка', 'после «назад» в адресе остался ?test=');
-    check(new URL(page.url()).searchParams.get('vk_app_id') === '1', 'ссылка', 'чужие параметры адреса (от ВК) потерялись');
+    check(new URL(page.url()).searchParams.get('utm_source') === 'vk', 'ссылка', 'чужие параметры адреса (от ВК) потерялись');
     await page.goto(base + '?test=nesushchestvuet');
     await page.waitForSelector('.test-card').catch(() => fail('ссылка', 'неизвестный ?test= не открыл главный экран'));
     check(testParam(page) === null, 'ссылка', 'неизвестный ?test= остался в адресе');

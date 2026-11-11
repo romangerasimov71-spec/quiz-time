@@ -5,7 +5,17 @@ window.QuizSound = (function () {
   var ctx = null;
   var enabled = null;   // читаем из хранилища при первом обращении (после QuizStore.init)
   function on() { if (enabled === null) enabled = QuizStore.get('sound') !== 'off'; return enabled; }
-  function quiet() { return !on() || (window.Platform && Platform.isPaused && Platform.isPaused()); }
+  // Звук «придержан»: пауза площадки (реклама, свернули) или идёт реклама за подсказку.
+  // Тогда AudioContext останавливается целиком (как требует площадка), потом запускается снова.
+  var holds = {};
+  function held() { for (var k in holds) if (holds[k]) return true; return false; }
+  function quiet() { return !on() || held(); }
+  function applyHold() {
+    if (!ctx) return;
+    try { if (held()) { if (ctx.state === 'running') ctx.suspend(); } else if (ctx.state === 'suspended') ctx.resume(); } catch (e) { /* ничего */ }
+  }
+  function hold(name, onOff) { holds[name] = !!onOff; applyHold(); }
+  if (window.Platform && Platform.onPause) Platform.onPause(function (p) { hold('pause', p); });
 
   function audio() {
     if (!ctx) {
@@ -13,7 +23,7 @@ window.QuizSound = (function () {
       if (!AC) return null;
       try { ctx = new AC(); } catch (e) { return null; }
     }
-    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) { /* ничего */ } }
+    if (ctx.state === 'suspended' && !held()) { try { ctx.resume(); } catch (e) { /* ничего */ } }
     return ctx;
   }
 
@@ -35,6 +45,7 @@ window.QuizSound = (function () {
 
   return {
     isOn: on,
+    hold: hold,
     toggle: function () {
       enabled = !on();
       QuizStore.set('sound', enabled ? 'on' : 'off', true);

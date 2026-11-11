@@ -169,6 +169,7 @@
   function render(node, name) {
     clearTimers();
     if (window.QuizShare && QuizShare.closeDialog) QuizShare.closeDialog();
+    if (toastEl.textContent) hideToast();   // сообщение прошлого экрана не висит на новом
     updateBanner();
     screen = name;
     app.innerHTML = '';
@@ -691,6 +692,11 @@
   function interruptMemorize() {
     if (state && state.phase === 'memorize') { state.memoInterrupted = true; clearTimers(); }
   }
+  function setAdShowing(v) {
+    adShowing = v;
+    if (window.QuizSound && QuizSound.hold) QuizSound.hold('ad', v);
+    updateBanner();
+  }
   function resumeAfterAd() {
     updateBanner();
     if (state && state.phase === 'memorize' && state.memoInterrupted && !adShowing && !(PF && PF.isPaused && PF.isPaused())) {
@@ -708,27 +714,26 @@
     var done = adWaitOverlay();
     PF.showRewarded({
       placement: 'hint',
-      onOpen: function () { adShowing = true; updateBanner(); },
-      onLateOpen: function () { adShowing = true; hideToast(); updateBanner(); interruptMemorize(); },
-      onLateReward: function () { adShowing = false; grantHint(run, true); resumeAfterAd(); },
+      onOpen: function () { setAdShowing(true); },
+      onLateOpen: function () { setAdShowing(true); hideToast(); interruptMemorize(); },
+      onLateReward: function () { setAdShowing(false); grantHint(run, true); resumeAfterAd(); },
       onLateFail: function (reason) {
-        adShowing = false;
+        setAdShowing(false);
         AN.event('ad_reward_failed', { reason: AD_FAIL_TEXT[reason] ? reason : 'error', late: true });
-        if (run === state && !run.ended) toast(AD_FAIL_TEXT[reason] || AD_FAIL_TEXT.error);
         resumeAfterAd();
+        if (run === state && !run.ended) toast(AD_FAIL_TEXT[reason] || AD_FAIL_TEXT.error);
       }
     }).then(function (res) {
       done();
       adBusy = false;
-      adShowing = false;
-      if (res && res.ok) {
-        grantHint(run, false);
-      } else {
-        var reason = res && AD_FAIL_TEXT[res.reason] ? res.reason : 'error';
-        AN.event('ad_reward_failed', { reason: reason, late: false });
-        if (!cancelledByBack && run === state && !run.ended) toast(AD_FAIL_TEXT[reason]);
-      }
+      setAdShowing(false);
+      var good = !!(res && res.ok);
+      var reason = good ? '' : (res && AD_FAIL_TEXT[res.reason] ? res.reason : 'error');
+      if (good) grantHint(run, false);
+      else AN.event('ad_reward_failed', { reason: reason, late: false });
       resumeAfterAd();
+      // ушёл «назад» или из прохождения — сообщать некому
+      if (!good && !cancelledByBack && run === state && !run.ended) toast(AD_FAIL_TEXT[reason]);
       var hb = app.querySelector('.hint-btn');
       if (hb && !cancelledByBack) { try { hb.focus({ preventScroll: true }); } catch (e) { /* ничего */ } }
     });

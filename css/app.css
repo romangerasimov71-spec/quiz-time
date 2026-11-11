@@ -267,21 +267,29 @@ button:disabled { cursor: default; }
   max-width: calc(var(--cols) * 110px);
   margin: 0 auto 18px;
 }
+/* Квадрат без aspect-ratio и без процентной высоты: высоту даёт ::before (padding-top
+   считается от ширины во всех браузерах), содержимое — слой поверх на всю клетку. */
 .mem-cell {
-  aspect-ratio: 1 / 1;
+  position: relative;
   border-radius: 18px;
   background: #fff;
   border: 3px solid var(--line);
-  display: grid;
-  place-items: center;
   min-width: 0;
+  overflow: hidden;
 }
+.mem-cell::before { content: ''; display: block; padding-top: 100%; }
 .mem-cell--empty { background: transparent; border: 3px dashed rgba(0, 0, 0, 0.08); }
-.mem-emoji { font-family: var(--emoji); font-size: clamp(34px, 11vw, 60px); line-height: 1; }
-.mem-dot { display: block; width: 66%; height: 66%; border-radius: 50%; box-shadow: inset 0 -5px 0 rgba(0, 0, 0, 0.15); }
+.mem-in {
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+/* размер эмодзи ставит js (0,55 ширины клетки); здесь — запас на случай без js */
+.mem-emoji { display: block; font-family: var(--emoji); font-size: 32px; line-height: 1.15; text-align: center; }
+.mem-dot { display: block; width: 100%; height: 100%; }
 .mem-grid--small { gap: 6px; max-width: calc(var(--cols) * 54px); margin: 8px auto 4px; }
 .mem-grid--small .mem-cell { border-radius: 10px; border-width: 2px; }
-.mem-grid--small .mem-emoji { font-size: 28px; }
+.mem-grid--small .mem-emoji { font-size: 24px; }
 .timer {
   height: 14px;
   max-width: 420px;
@@ -469,7 +477,7 @@ body.on-result, body.on-intro { background: linear-gradient(160deg, var(--c1), v
     gap: 8px; max-width: none; margin: 0;
   }
   .memorize .mem-cell { width: var(--cell); height: var(--cell); border-radius: 14px; }
-  .memorize .mem-emoji { font-size: calc(var(--cell) * 0.6); }
+  .memorize .mem-emoji { font-size: calc(var(--cell) * 0.55); }
   .memorize__title, .memorize__hint, .memorize .timer, .memorize .btn { grid-column: 2; }
   .memorize__title { margin-top: 0; }
   .memorize .timer { margin: 4px 0 14px; max-width: none; }

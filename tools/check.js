@@ -246,6 +246,41 @@ function checkMemoryQuestion(q, where) {
   }
 }
 
+/* Клетки «запомни»: кружок виден (не меньше 40% клетки), эмодзи целиком в клетке и по центру
+   (сдвиг центра не больше 12% клетки). scope — '.memorize' или '.feedback'. */
+async function memGeometry(page, scope) {
+  return page.evaluate((sc) => {
+    const out = [];
+    const cells = [...document.querySelectorAll(sc + ' .mem-cell:not(.mem-cell--empty)')];
+    if (!cells.length) out.push('нет клеток');
+    cells.forEach((cell, i) => {
+      const r = cell.getBoundingClientRect();
+      const cs = getComputedStyle(cell);
+      const bl = parseFloat(cs.borderLeftWidth), bt = parseFloat(cs.borderTopWidth);
+      const box = { left: r.left + bl, top: r.top + bt, w: cell.clientWidth, h: cell.clientHeight };
+      if (!(box.w > 10 && Math.abs(box.w - box.h) <= 1.5)) { out.push(`клетка ${i + 1}: ${Math.round(box.w)}×${Math.round(box.h)} — не квадрат`); return; }
+      const size = box.w;
+      const circle = cell.querySelector('.mem-dot circle');
+      const em = cell.querySelector('.mem-emoji');
+      const target = circle || em;
+      if (!target) { out.push(`клетка ${i + 1}: пустая`); return; }
+      const t = target.getBoundingClientRect();
+      if (circle) {
+        if (!(t.width >= 0.4 * size && t.height >= 0.4 * size)) out.push(`клетка ${i + 1}: кружок ${Math.round(t.width)}×${Math.round(t.height)} при клетке ${Math.round(size)}`);
+      } else if (t.width < 0.3 * size || t.height < 0.3 * size) {
+        out.push(`клетка ${i + 1}: эмодзи слишком мелкий ${Math.round(t.width)}×${Math.round(t.height)} при клетке ${Math.round(size)}`);
+      }
+      const e = 0.5;
+      if (t.left < box.left - e || t.top < box.top - e || t.right > box.left + box.w + e || t.bottom > box.top + box.h + e) {
+        out.push(`клетка ${i + 1}: ${circle ? 'кружок' : 'эмодзи'} вылезает за клетку (${Math.round(t.width)}×${Math.round(t.height)} в ${Math.round(size)})`);
+      }
+      const dx = (t.left + t.width / 2) - (box.left + box.w / 2), dy = (t.top + t.height / 2) - (box.top + box.h / 2);
+      if (Math.abs(dx) > 0.12 * size || Math.abs(dy) > 0.12 * size) out.push(`клетка ${i + 1}: не по центру, сдвиг ${Math.round(dx)}, ${Math.round(dy)} при клетке ${Math.round(size)}`);
+    });
+    return out;
+  }, scope);
+}
+
 /* Заставка теста */
 async function checkIntro(page, vp, test, where) {
   await page.waitForSelector('[data-action="start"]');
@@ -884,6 +919,36 @@ async function extraChecks(browser, base, tests, port) {
     console.log('  280px без прокрутки вбок; на 360×640 «Поделиться» видно сразу');
   }
 
+  // 6а) «Запомни» на телефоне-портрете 390×844 и 360×640: все 10 шаблонов (3 в ряд, 4 кружка,
+  //     5 в ряд, крест 3×3, 6 и 7 предметов) — на картинке и в «Вот что было на картинке»
+  for (const size of [{ width: 390, height: 844 }, { width: 360, height: 640 }]) {
+    const tag = `запомни ${size.width}×${size.height}`;
+    const ctx = await newContext(browser, { viewport: size, isMobile: true, hasTouch: true, deviceScaleFactor: 3 });
+    const page = await ctx.newPage();
+    attachErrorWatch(page, tag);
+    await page.goto(base + '?test=' + memory.id);
+    await press(page, '[data-action="start"]', 'touch');
+    const kinds = new Set();
+    for (let i = 0; i < 10; i++) {
+      await page.waitForSelector('.memorize .mem-grid');
+      const q = await page.evaluate(() => { const s = window.QuizApp.state(); const x = s.questions[s.idx]; return { kind: x.kind, n: x.show.length, cols: x.cols }; });
+      kinds.add(q.kind);
+      for (const p of await memGeometry(page, '.memorize')) fail(tag, `вопрос ${i + 1} (${q.kind}, ${q.n} кл., ${q.cols} в ряд), картинка: ${p}`);
+      if (i === 2 || i === 4 || i === 5 || i === 9) await shot(page, `mem${size.width}-q${i + 1}`);
+      await page.waitForSelector('[data-action="ready"]:not([disabled])');
+      await press(page, '[data-action="ready"]', 'touch');
+      await press(page, '.answer[data-index="0"]', 'touch');
+      await page.waitForSelector('.feedback .mem-grid');
+      for (const p of await memGeometry(page, '.feedback')) fail(tag, `вопрос ${i + 1} (${q.kind}), «Вот что было»: ${p}`);
+      if (i === 2 || i === 4) await shot(page, `mem${size.width}-q${i + 1}-feedback`);
+      await press(page, '.next-btn', 'touch');
+    }
+    check(kinds.size >= 7, tag, `проверены не все шаблоны: ${[...kinds].join(', ')}`);
+    await page.waitForSelector('.result__card');
+    await ctx.close();
+  }
+  console.log('  «запомни» 390×844 и 360×640: кружки видны, эмодзи по центру и внутри клеток (картинка и «Вот что было»)');
+
   // 6б) «Запомни» в альбоме: картинка, таймер и «Готово» помещаются без прокрутки
   for (const size of [{ width: 844, height: 390 }, { width: 640, height: 360 }]) {
     const tag = `альбом ${size.width}×${size.height}`;
@@ -905,6 +970,7 @@ async function extraChecks(browser, base, tests, port) {
             q: window.QuizApp.state().questions[window.QuizApp.state().idx].q };
         });
         check(!fit.out.length && !fit.sw, tag, `вопрос ${i + 1} («${fit.q}»): за краем экрана — ${fit.out.join(', ') || 'прокрутка вбок'}`);
+        for (const p of await memGeometry(page, '.memorize')) fail(tag, `вопрос ${i + 1} («${fit.q}»): ${p}`);
         if (run === 0 && (i === 5 || i === 9)) await shot(page, `land${size.width}-mem-q${i + 1}`);
         await page.waitForSelector('[data-action="ready"]:not([disabled])');
         await press(page, '[data-action="ready"]', 'touch');
@@ -915,7 +981,7 @@ async function extraChecks(browser, base, tests, port) {
     }
     await ctx.close();
   }
-  console.log('  «запомни» в альбоме 844×390 и 640×360: картинка, таймер и «Готово» на экране');
+  console.log('  «запомни» в альбоме 844×390 и 640×360: картинка, таймер и «Готово» на экране, клетки в порядке');
 
   // 7) Внутри чужого iframe (как в ВК/ОК): ни одной ошибки в консоли, «Поделиться» работает
   {

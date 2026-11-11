@@ -161,6 +161,7 @@
     app.setAttribute('data-screen', name);
     document.body.className = 'on-' + name;
     app.appendChild(node);
+    fitMemGrids();
     window.scrollTo(0, 0);
     lockInput(INPUT_LOCK_MS);
   }
@@ -382,17 +383,53 @@
     ]);
   }
 
+  /* Клетки «запомни». Без процентной высоты (Safari считает её нулём):
+     квадрат клетки держит ::before с padding-top:100%, содержимое — слой на всю клетку
+     (position:absolute; inset:0), кружок — SVG, размер эмодзи считает fitMemGrids() от ширины клетки. */
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  function colorDot(color) {
+    var svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 100 100');
+    svg.setAttribute('class', 'mem-dot');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    var c = document.createElementNS(SVG_NS, 'circle');
+    c.setAttribute('cx', '50'); c.setAttribute('cy', '50'); c.setAttribute('r', '34');
+    c.setAttribute('fill', color);
+    var shade = document.createElementNS(SVG_NS, 'path'); // тень снизу, как раньше
+    shade.setAttribute('d', 'M16 50 A34 34 0 0 0 84 50 A34 30 0 0 1 16 50 Z');
+    shade.setAttribute('fill', 'rgba(0,0,0,0.15)');
+    svg.appendChild(c); svg.appendChild(shade);
+    return svg;
+  }
+
   function memoryGrid(q, small) {
     var cols = q.cols || Math.min(q.show.length, 4);
     var rows = Math.ceil(q.show.length / cols);
     return h('div', { class: 'mem-grid' + (small ? ' mem-grid--small' : ''), style: '--cols:' + cols + ';--rows:' + rows }, q.show.map(function (it) {
       if (it === '' || it == null) return h('div', { class: 'mem-cell mem-cell--empty' });
-      if (typeof it === 'object' && it.color) {
-        return h('div', { class: 'mem-cell' }, [h('span', { class: 'mem-dot', style: 'background:' + it.color })]);
-      }
-      return h('div', { class: 'mem-cell' }, [h('span', { class: 'mem-emoji', text: String(it) })]);
+      var inner = typeof it === 'object' && it.color ? colorDot(it.color) : h('span', { class: 'mem-emoji', text: String(it) });
+      return h('div', { class: 'mem-cell' }, [h('div', { class: 'mem-in' }, [inner])]);
     }));
   }
+
+  // Размер эмодзи и кружка — от настоящей ширины клетки (а не от ширины экрана)
+  var EMOJI_PART = 0.55;
+  function fitMemGrids() {
+    var cells = app.querySelectorAll('.mem-cell');
+    for (var i = 0; i < cells.length; i++) {
+      var w = cells[i].clientWidth; // без рамки
+      if (!(w > 0)) continue;
+      var em = cells[i].querySelector('.mem-emoji');
+      if (em) em.style.fontSize = Math.max(12, Math.round(w * EMOJI_PART)) + 'px';
+      var dot = cells[i].querySelector('.mem-dot');
+      if (dot) { dot.style.width = w + 'px'; dot.style.height = w + 'px'; } // точный размер, без процентов
+    }
+  }
+  var fitTimer = null;
+  function refit() { clearTimeout(fitTimer); fitTimer = setTimeout(fitMemGrids, 60); }
+  window.addEventListener('resize', refit);
+  window.addEventListener('orientationchange', refit);
 
   function showQuestion() {
     var q = state.questions[state.idx];
@@ -504,6 +541,7 @@
       [last ? 'Узнать результат' : 'Дальше →']);
     children.push(next);
     children.forEach(function (c) { fb.appendChild(c); });
+    if (q.type === 'memory') fitMemGrids();
 
     var fill = app.querySelector('.progress__fill');
     if (fill) fill.style.width = ((state.idx + 1) / state.total * 100) + '%';

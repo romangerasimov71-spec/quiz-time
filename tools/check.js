@@ -743,7 +743,7 @@ async function extraChecks(browser, base, tests, port) {
       for (const t of window.QuizApp.tests) {
         try { localStorage.removeItem('quiz-time:recent:' + t.id); } catch (e) { /* ничего */ }
         const runs = [];
-        for (let i = 0; i < 100; i++) runs.push(window.QuizApp.prepareQuestions(t).map((q) => ({ q: q.q, d: q.d })));
+        for (let i = 0; i < 100; i++) runs.push(window.QuizApp.prepareQuestions(t).map((q) => ({ q: q.q, d: q.d, g: q.group || '' })));
         out[t.id] = runs;
       }
       return out;
@@ -759,9 +759,11 @@ async function extraChecks(browser, base, tests, port) {
       const want = expectedQuotas(n, avail);
       const runs = res[t.id];
       const shown = new Set();
-      let overlapSum = 0, overlapMax = 0, badCount = 0, badMix = 0, badOrder = 0, dup = 0, overBound = 0;
+      let overlapSum = 0, overlapMax = 0, badCount = 0, badMix = 0, badOrder = 0, dup = 0, overBound = 0, sameGroup = 0;
       runs.forEach((r, k) => {
         r.forEach((q) => shown.add(q.q));
+        const gs = r.map((q) => q.g).filter(Boolean);
+        if (new Set(gs).size !== gs.length) sameGroup++;
         if (r.length !== n) badCount++;
         if (new Set(r.map((q) => q.q)).size !== r.length) dup++;
         const ds = r.map(level);
@@ -781,6 +783,7 @@ async function extraChecks(browser, base, tests, port) {
       });
       check(!badCount, w, `${badCount} из 100 прохождений не по ${n} вопросов`);
       check(!dup, w, `${dup} из 100 прохождений с повтором вопроса внутри`);
+      check(!sameGroup, w, `${sameGroup} из 100 прохождений с двумя вопросами одной группы (group)`);
       check(!badOrder, w, `${badOrder} из 100 прохождений не от лёгких к трудным`);
       check(!badMix, w, `${badMix} из 100 прохождений не ${want[1]}/${want[2]}/${want[3]} по сложности`);
       check(!overBound, w, `${overBound} из 99 прохождений повторяют прошлое больше, чем нужно`);
@@ -788,6 +791,46 @@ async function extraChecks(browser, base, tests, port) {
       console.log(`  ${t.id}: 100×${n}, по сложности ${want[1]}/${want[2]}/${want[3]}, повторов с прошлым разом: в среднем ${(overlapSum / 99).toFixed(2)}, максимум ${overlapMax}; показаны все ${shown.size}`);
     }
     if (!any) console.log('  тестов с запасом вопросов пока нет');
+    await ctx.close();
+  }
+
+  // 1в) «Проверь память»: ответ нельзя угадать без картинки (по месту числа или по набору картинок)
+  if (memory) {
+    const ctx = await newContext(browser, phoneVp);
+    const page = await ctx.newPage();
+    attachErrorWatch(page, 'память-статистика');
+    await page.goto(base);
+    await page.waitForSelector('.test-card');
+    const st = await page.evaluate(() => {
+      const t = window.QuizApp.tests.find((x) => x.id === 'memory');
+      const out = { count: [], most: [] };
+      for (let guard = 0; guard < 20000 && (out.count.length < 2000 || out.most.length < 2000); guard++) {
+        window.QuizApp.prepareQuestions(t).forEach((q) => {
+          if (q.kind === 'count' && out.count.length < 2000) {
+            const nums = q.a.map(Number);
+            out.count.push({ layout: q.layout, place: nums.slice().sort((a, b) => a - b).indexOf(nums[0]), min: Math.min(...nums) });
+          }
+          if (q.kind === 'most' && out.most.length < 2000) {
+            const onPic = q.a.map((x) => q.show.includes(x));
+            out.most.push({ onlyShown: onPic[0] && onPic.slice(1).every((x) => !x), shownWrong: onPic.slice(1).filter(Boolean).length });
+          }
+        });
+      }
+      return out;
+    });
+    const w = 'память/статистика';
+    check(st.count.length === 2000 && st.most.length === 2000, w, `набралось «сколько» ${st.count.length}, «больше всего» ${st.most.length}`);
+    const places = [0, 1, 2, 3].map((p) => st.count.filter((x) => x.place === p).length / st.count.length * 100);
+    places.forEach((pc, p) => check(pc >= 15 && pc <= 35, w, `«Сколько было …?»: верное число на ${p + 1}-м месте по величине в ${pc.toFixed(1)}% (нужно 25 ± 10)`));
+    check(st.count.every((x) => x.min >= 1), w, '«Сколько было …?»: среди вариантов есть 0 или отрицательное число');
+    const byLayout = {};
+    st.count.forEach((x) => { (byLayout[x.layout] = byLayout[x.layout] || [0, 0, 0, 0])[x.place]++; });
+    const onlyShown = st.most.filter((x) => x.onlyShown).length / st.most.length * 100;
+    const wrongShown = st.most.reduce((s, x) => s + x.shownWrong, 0) / st.most.length;
+    check(onlyShown <= 35, w, `«Чего было больше всего?»: верный — единственный вариант с картинки в ${onlyShown.toFixed(1)}% (нужно не выше 35%)`);
+    console.log(`  память: «сколько» 2000 вопросов, верное по величине 1/2/3/4-е: ${places.map((x) => x.toFixed(1) + '%').join(' / ')}` +
+      ` (по шагам: ${Object.keys(byLayout).map((l) => l + ' ' + byLayout[l].join('/')).join(', ')});` +
+      ` «больше всего» 2000: верный — единственный с картинки ${onlyShown.toFixed(1)}%, неверных с картинки в среднем ${wrongShown.toFixed(2)} из 3`);
     await ctx.close();
   }
 
@@ -1067,6 +1110,10 @@ async function extraChecks(browser, base, tests, port) {
       (q.a || []).forEach((x) => check(typeof x === 'string' && x.trim() && x.length <= 40, w, `вопрос ${i + 1}: вариант «${x}» пустой или длиннее 40`));
       check(!!q.fact, w, `вопрос ${i + 1}: нет пояснения «А вы знали?»`);
     });
+    check(t.isNew === undefined || typeof t.isNew === 'boolean', w, `isNew должно быть true/false, сейчас ${t.isNew}`);
+    const groups = {};
+    t.questions.forEach((q, i) => { if (q.group != null) { check(typeof q.group === 'string' && q.group, w, `вопрос ${i + 1}: group — не строка`); groups[q.group] = (groups[q.group] || 0) + 1; } });
+    Object.keys(groups).forEach((g) => check(groups[g] >= 2, w, `группа «${g}» только у одного вопроса — опечатка?`));
     check(t.ranks.length === 4 && t.ranks.map((r) => r.min).join(',') === '0,4,7,9', w, `звания: нужно 4 с порогами 0/4/7/9, сейчас ${t.ranks.map((r) => r.min).join('/')}`);
     t.ranks.forEach((r) => check(r.title && r.text, w, `у звания с ${r.min} нет названия или фразы`));
     for (const c of [t.color, t.color2 || t.color]) {

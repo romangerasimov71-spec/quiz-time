@@ -40,6 +40,10 @@
  *   Platform.appUrl()          — адрес приложения в текущей площадке (из APP_CONFIG.APP_URL).
  *   Platform.payload           — данные из ссылки запуска (во ВК: всё после # в адресе).
  *   Platform.isPaused() / onPause(fn) — площадка поставила паузу (реклама, свернули вкладку).
+ *   Platform.favoritesKind()   — 'favorites' / 'home_screen', если площадка умеет добавить приложение
+ *                                в избранное / на главный экран; '' — не умеет или это не площадка.
+ *   Platform.addToFavorites()  — окно площадки «добавить» (Promise<true|false>: добавил / нет).
+ *   CSS-переменная --banner-zone — место под баннер, пока он возможен (окна держатся выше неё).
  *
  * Без площадки реклама за награду и баннер — имитация: своё окно «здесь будет реклама»
  * с отсчётом и серая полоска внизу. Имитация включается ТОЛЬКО на проверочных адресах:
@@ -373,6 +377,10 @@
       if (P.hasBridge && safe(function () { return bridge.advertisement.isBannerSupported; }, false)) this.mode = "bridge";
       else if (!P.isReal && testHost() && (opts.fakeBanner != null ? opts.fakeBanner : cfg.FAKE_BANNER) && query("nobanner") == null) this.mode = "fake";
       else this.mode = "none";
+      // --banner-zone: сколько места снизу может занять баннер, пока он вообще возможен (даже когда
+      // сейчас спрятан). По ней окна (вопрос, ожидание рекламы, «поделиться») встают целиком выше:
+      // на площадке баннер рисует ВК/ОК поверх страницы, и на z-index полагаться нельзя.
+      document.documentElement.style.setProperty("--banner-zone", this.mode !== "none" ? this.reservePx + "px" : "0px");
     },
     reserve: function (on) {
       var root = document.documentElement;
@@ -411,6 +419,27 @@
       if (this.mode === "bridge") safe(function () { bridge.advertisement.hideBanner(); });
       else if (this.mode === "fake" && this.el) { this.el.style.display = "none"; this.state = "hidden"; }
     }
+  };
+
+  /* ---------------- «в избранное» / «на главный экран» ---------------- */
+
+  // Что площадка умеет: 'favorites' (во ВК — «Добавить в избранное»), 'home_screen' (ярлык на
+  // главный экран телефона) или '' — ничего (и всегда '' вне настоящей площадки: GitHub Pages,
+  // обычный браузер). Предлагать это человеку — только когда он уже несколько раз заходил.
+  P.favoritesKind = function () {
+    if (!P.hasBridge || !P.isReal) return "";
+    if (safe(function () { return bridge.social.isAddToFavoritesSupported; }, false)) return "favorites";
+    if (safe(function () { return bridge.social.isAddToHomeScreenSupported; }, false)) return "home_screen";
+    return "";
+  };
+  // Окно площадки «добавить». Promise<true> — добавил, <false> — передумал или ошибка.
+  P.addToFavorites = function () {
+    var kind = P.favoritesKind();
+    return Promise.resolve().then(function () {
+      if (kind === "favorites") return bridge.social.addToFavorites();
+      if (kind === "home_screen") return bridge.social.addToHomeScreen();
+      throw new Error("not supported");
+    }).then(function () { return true; }, function () { return false; });
   };
 
   /* ---------------- поделиться, ссылки, буфер обмена ---------------- */

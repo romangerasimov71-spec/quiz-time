@@ -106,9 +106,28 @@
     document.documentElement.style.setProperty('--accent', color);
   }
 
-  /* Сообщение — вверху, под строкой «Вопрос N из 10» (там, где ему нечего закрывать), и прозрачно
-     для касаний (pointer-events: none в CSS): нажатие сквозь него доходит до кнопки под ним. */
+  /* Сообщение — вверху, там, где ему нечего закрывать (на вопросе — поверх верхней панели, на других
+     экранах — под верхней строкой), и прозрачно для касаний (pointer-events: none в CSS):
+     нажатие сквозь него доходит до кнопки под ним. */
   function placeToast() {
+    toastEl.classList.remove('toast--bar');
+    toastEl.style.left = toastEl.style.width = toastEl.style.minHeight = toastEl.style.maxHeight = '';
+    // Экран вопроса: узкой строкой поверх верхней панели (кнопки «‹ Тесты», «Вопрос N из 10»,
+    // полоска хода) — не закрывает ни вопрос, ни варианты, ни «Дальше».
+    var bar = screen === 'question' && app.querySelector('.topbar__row');
+    if (bar) {
+      var r = bar.getBoundingClientRect();
+      var prog = app.querySelector('.topbar .progress');
+      var bottom = prog ? prog.getBoundingClientRect().bottom : r.bottom;
+      var top0 = Math.max(4, r.top);
+      toastEl.classList.add('toast--bar');
+      toastEl.style.top = Math.round(top0) + 'px';
+      toastEl.style.left = Math.round(r.left + r.width / 2) + 'px';
+      toastEl.style.width = Math.round(r.width) + 'px';
+      toastEl.style.minHeight = Math.round(r.height) + 'px';
+      toastEl.style.maxHeight = Math.round(Math.max(r.height, bottom - top0)) + 'px';
+      return;
+    }
     var row = app.querySelector('.topbar__row, .result__top, .home__head');
     var top = row ? Math.max(8, row.getBoundingClientRect().bottom + 8) : 12;
     toastEl.style.top = Math.round(top) + 'px';
@@ -242,18 +261,31 @@
     if (!grid || !ready) return;
     if (!keep) { grid.style.maxWidth = ''; grid.style.removeProperty('--cell'); }
     var bottom = function () { return Math.max(docBottom(ready), docBottom(grid)); };
-    if (!keep) setFitLevel(main, 0);
-    if (bottom() > visibleBottom()) setFitLevel(main, 1);
-    if (bottom() <= visibleBottom()) { fitMemGrids(); return; }
     var cols = parseInt(grid.style.getPropertyValue('--cols'), 10) || 3;
+    var rows = parseInt(grid.style.getPropertyValue('--rows'), 10) || 1;
     var gap = parseFloat(getComputedStyle(grid).columnGap) || 8;
-    var side = getComputedStyle(app.querySelector('.memorize')).display === 'grid';   // альбом: картинка слева
-    var cell = grid.querySelector('.mem-cell');
-    var cw = Math.floor(cell ? cell.getBoundingClientRect().width : 80);
+    var memo = app.querySelector('.memorize');
+    var side = getComputedStyle(memo).display === 'grid';   // альбом: картинка слева
     var setCell = function (px) {
       if (side) grid.style.setProperty('--cell', px + 'px');
       else grid.style.maxWidth = (cols * px + (cols - 1) * gap + 1) + 'px';
     };
+    if (!keep) setFitLevel(main, 0);
+    if (side && !keep) {
+      // Альбом: клетки — сколько позволяет высота над баннером (крест 3×3 на 640×360 — ~50 px, а не 35),
+      // но не шире половины экрана и не больше 84 px
+      var byHeight = function () {
+        var avail = visibleBottom() - (grid.getBoundingClientRect().top + (window.pageYOffset || 0));
+        return Math.floor((avail - (rows - 1) * gap) / rows);
+      };
+      var byWidth = Math.floor((memo.clientWidth * 0.55 - (cols - 1) * gap) / cols);
+      if (byHeight() < 64) setFitLevel(main, 1);
+      setCell(Math.max(36, Math.min(84, byWidth, byHeight())));
+    }
+    if (bottom() > visibleBottom()) setFitLevel(main, 1);
+    if (bottom() <= visibleBottom()) { fitMemGrids(); return; }
+    var cell = grid.querySelector('.mem-cell');
+    var cw = Math.floor(cell ? cell.getBoundingClientRect().width : 80);
     // Уменьшаем клетки, пока картинка и «Готово» не встанут над баннером (в альбоме меньшая
     // картинка ещё и даёт место правой колонке — заголовок и кнопка перестают переноситься).
     for (var px = cw - 4; px >= 36; px -= 4) {
@@ -306,7 +338,7 @@
       h('div', { class: 'exit-dialog__box' }, [
         h('p', { class: 'exit-dialog__title', id: 'exit-title', text: 'Выйти из теста?' }),
         h('p', { class: 'exit-dialog__text', text: 'Ответы не сохранятся.' }),
-        stay, leave
+        h('div', { class: 'exit-dialog__btns' }, [stay, leave])
       ])
     ]);
     box.addEventListener('click', function (e) { if (e.target === box) closeExit(); });   // мимо окна — «Остаться»
@@ -322,6 +354,7 @@
     document.body.classList.add('is-modal');
     app.setAttribute('inert', '');
     exitDlg = { box: box, trap: trap };
+    updateBanner();   // окно — над зоной баннера, а сам баннер на это время спрятан
     try { stay.focus({ preventScroll: true }); } catch (e) { stay.focus(); }
   }
   function closeExit() {
@@ -331,6 +364,7 @@
     exitDlg = null;
     document.body.classList.remove('is-modal');
     app.removeAttribute('inert');
+    updateBanner();
   }
   function leaveTest() { navigateHome(); }
 
@@ -376,11 +410,140 @@
 
   /* ---------- главный экран ---------- */
 
-  var introSource = 'home';   // откуда пришли на заставку: home (список тестов) / link (ссылка)
-  function openTest(t) {
-    introSource = 'home';
+  var introSource = 'home';   // откуда пришли на заставку: home (список тестов) / daily («Тест дня») / link (ссылка)
+  function openTest(t, source) {
+    introSource = source || 'home';
     pushTest(t);
     showIntro(t);
+  }
+
+  /* ---------- «Тест дня» (повод заходить каждый день) ---------- */
+  /* Каждый день — один из тестов, без сервера: по номеру дня из постоянного «перемешанного» круга
+     всех тестов (как «Сон дня» в «Соннике»). За N дней (N — число тестов) ни один не повторится,
+     два дня подряд — всегда разные. Пройден сегодня — на карточке «Пройден сегодня: 8 из 10». */
+  function dayNumber(date) {
+    return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86400000);
+  }
+  function today() { return dayNumber(new Date()); }
+  function dateLabel(date) {
+    try { return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }); } catch (e) { return ''; }
+  }
+  var dailyOrder = null;
+  function dailyTest(date) {
+    if (!tests.length) return null;
+    if (!dailyOrder) {
+      dailyOrder = tests.map(function (t) { return t.id; }).sort();
+      var seed = 20261111;
+      var rnd = function () {   // mulberry32: один и тот же порядок у всех
+        seed = (seed + 0x6D2B79F5) | 0;
+        var t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+      for (var i = dailyOrder.length - 1; i > 0; i--) {
+        var j = Math.floor(rnd() * (i + 1));
+        var x = dailyOrder[i]; dailyOrder[i] = dailyOrder[j]; dailyOrder[j] = x;
+      }
+    }
+    var n = dayNumber(date || new Date()), L = dailyOrder.length;
+    var id = dailyOrder[((n % L) + L) % L];
+    return tests.filter(function (t) { return t.id === id; })[0] || null;
+  }
+  // Результат теста дня за сегодня ({ day, test, score, total }) или null
+  function dailyDone() {
+    var r = QuizStore.get('daily'), t = dailyTest();
+    return r && typeof r === 'object' && t && r.day === today() && r.test === t.id && typeof r.score === 'number' ? r : null;
+  }
+  // Пройден тест — если это сегодняшний тест дня, запомнить (лучший результат за сегодня)
+  function noteDaily(t, score, total) {
+    var d = dailyTest();
+    if (!d || d.id !== t.id) return;
+    var prev = dailyDone();
+    if (!prev) AN.event('daily_completed', { level_id: t.id, score: score, total: total });
+    if (!prev || score > prev.score) QuizStore.set('daily', { day: today(), test: t.id, score: score, total: total }, true);
+  }
+
+  var dailyShownDay = null;
+  function dailyCard() {
+    var t = dailyTest();
+    if (!t) return null;
+    dailyShownDay = today();
+    var done = dailyDone();
+    var total = runLength(t);
+    return h('button', {
+      class: 'daily-card' + (done ? ' daily-card--done' : ''), type: 'button', 'data-action': 'daily', 'data-test': t.id,
+      style: '--c1:' + t.color + ';--c2:' + (t.color2 || t.color),
+      'aria-label': 'Тест дня, ' + dateLabel(new Date()) + ': «' + t.title + '»' + (done ? '. Пройден сегодня: ' + done.score + ' из ' + done.total : ''),
+      onclick: function () {
+        AN.event('daily_opened', { level_id: t.id, done: !!done });
+        openTest(t, 'daily');
+      }
+    }, [
+      h('span', { class: 'daily-card__label', text: '⭐ Тест дня · ' + dateLabel(new Date()) }),
+      h('span', { class: 'daily-card__main' }, [
+        h('span', { class: 'test-card__emoji daily-card__emoji', 'aria-hidden': 'true', text: t.emoji }),
+        h('span', { class: 'daily-card__body' }, [
+          h('span', { class: 'daily-card__title', text: t.title }),
+          h('span', { class: 'daily-card__state', text: done
+            ? 'Пройден сегодня: ' + done.score + ' из ' + done.total + ', завтра новый'
+            : wordQuestions(total) + ' · завтра будет новый' })
+        ])
+      ])
+    ]);
+  }
+  // Наступила полночь, а человек на главном — карточка дня меняется сама
+  setInterval(function () {
+    if (screen !== 'home' || document.hidden || dailyShownDay === today()) return;
+    var old = app.querySelector('.daily-card'), fresh = dailyCard();
+    if (old && fresh) old.parentNode.replaceChild(fresh, old);
+  }, 60000);
+
+  /* ---------- «Добавить в избранное / на главный экран» ---------- */
+  /* Не с порога: только на настоящей площадке, которая это умеет (Platform.favoritesKind), когда
+     человек заходит уже 3-й день или больше и в этот раз прошёл тест — на главном, куда он вернулся.
+     Предложили и человек ничего не нажал — снова не раньше, чем через 3 дня. Нажал «Добавить»
+     (добавил или передумал в окне площадки) или «Не надо» — больше не предлагаем. */
+  var FAV_MIN_DAYS = 3, FAV_REPEAT_DAYS = 3;
+  var passedThisRun = false, favShownNow = false;
+  function noteVisit() {
+    var v = QuizStore.get('visits'), d = today();
+    if (!v || typeof v !== 'object') v = { days: 0, last: null };
+    if (v.last === d) return;
+    QuizStore.set('visits', { days: (parseInt(v.days, 10) || 0) + 1, last: d });
+  }
+  function favOffer() {
+    var kind = PF && PF.favoritesKind ? PF.favoritesKind() : '';
+    if (!kind || !passedThisRun) return null;
+    var f = QuizStore.get('fav') || {};
+    var v = QuizStore.get('visits') || {};
+    if (f.state) return null;
+    if ((parseInt(v.days, 10) || 0) < FAV_MIN_DAYS) return null;
+    if (!favShownNow && f.offered != null && today() - f.offered < FAV_REPEAT_DAYS) return null;
+    if (!favShownNow) {
+      favShownNow = true;
+      QuizStore.set('fav', { offered: today() });
+      AN.event('favorites_offered', { kind: kind });
+    }
+    var row;
+    var finish = function (st) { QuizStore.set('fav', { offered: today(), state: st }, true); favShownNow = false; if (row) row.remove(); };
+    var yes = h('button', { class: 'btn fav-offer__yes', type: 'button', 'data-action': 'fav-yes', onclick: function () {
+      AN.event('favorites_clicked', { kind: kind });
+      yes.disabled = true;
+      PF.addToFavorites().then(function (ok) {
+        if (ok) {
+          AN.event('favorites_added', { kind: kind });
+          toast(kind === 'favorites' ? 'Готово: викторины в избранном.' : 'Готово: викторины на главном экране.');
+        }
+        finish(ok ? 'yes' : 'no');
+      });
+    } }, [kind === 'favorites' ? '⭐ Добавить в избранное' : '📲 Добавить на главный экран']);
+    var no = h('button', { class: 'fav-offer__no', type: 'button', 'data-action': 'fav-no', 'aria-label': 'Не надо, больше не предлагать',
+      onclick: function () { finish('no'); } }, ['Не надо']);
+    row = h('div', { class: 'fav-offer', 'data-fav': kind }, [
+      h('p', { class: 'fav-offer__text', text: kind === 'favorites' ? 'Нравятся викторины? Добавьте их в избранное — будет легко найти.' : 'Нравятся викторины? Добавьте их на главный экран телефона.' }),
+      h('div', { class: 'fav-offer__btns' }, [yes, no])
+    ]);
+    return row;
   }
 
   function showHome() {
@@ -399,6 +562,8 @@
           h('span', { class: 'test-card__title', text: t.title }),
           h('span', { class: 'test-card__sub', text: t.subtitle || '' }),
           h('span', { class: 'test-card__meta' }, [
+            // «Новинка»: тест помечен в данных (isNew) и человек его ещё не проходил (нет рекорда)
+            t.isNew && best == null ? h('span', { class: 'chip chip--new', text: 'Новинка' }) : null,
             h('span', { class: 'chip', text: wordQuestions(total) }),
             best != null ? h('span', { class: 'chip chip--best', text: '🏆 ' + best + ' из ' + total }) : null
           ])
@@ -416,6 +581,8 @@
         ]),
         soundButton('sound-btn--home')
       ]),
+      dailyCard(),
+      favOffer(),
       h('div', { class: 'cards' }, cards)
     ]), 'home');
   }
@@ -524,11 +691,20 @@
     });
     var take = quotas(n, { 1: groups[1].length, 2: groups[2].length, 3: groups[3].length });
     var chosen = [], keys = [];
+    // Вопросы одной группы (поле group, например два вопроса про один балет: один подсказывает
+    // ответ на другой) — не больше одного за прохождение. Не хватает без повтора группы — добираем.
+    var usedGroups = {};
     [1, 2, 3].forEach(function (d) {
       var g = shuffle(groups[d]).map(function (x, i) { x.pos = i; return x; });
       g.sort(function (a, b) { return a.age - b.age || a.pos - b.pos; });
-      var part = shuffle(g.slice(0, take[d]));
-      part.forEach(function (x) { chosen.push(x.q); keys.push(x.key); });
+      var part = [], rest = [];
+      g.forEach(function (x) {
+        var gr = x.q.group;
+        if (part.length < take[d] && !(gr && usedGroups[gr])) { part.push(x); if (gr) usedGroups[gr] = true; }
+        else rest.push(x);
+      });
+      while (part.length < take[d] && rest.length) part.push(rest.shift());
+      shuffle(part).forEach(function (x) { chosen.push(x.q); keys.push(x.key); });
     });
     saveRecent(test.id, [keys].concat(recent));
     return chosen;
@@ -800,7 +976,13 @@
     return h('button', { class: 'btn btn--ghost ' + slotClass('hint-btn', slot), type: 'button', 'data-action': 'hint', 'data-slot': slot,
       'aria-label': 'Подсказка «50 на 50» за просмотр рекламы', onclick: startHintAd }, [
       h('span', { class: 'hint-btn__icon', 'aria-hidden': 'true', text: '½' }),
-      h('span', { class: 'hint-btn__text', text: slot === 'top' ? '50 на 50' : '50 на 50 (за рекламу)' })
+      // в верхней строке (альбом) места мало: «50 на 50» и под ним мелко «▶ реклама» — видно до нажатия
+      slot === 'top'
+        ? h('span', { class: 'hint-btn__label' }, [
+          h('span', { class: 'hint-btn__text', text: '50 на 50' }),
+          h('span', { class: 'hint-btn__ad', text: '▶ реклама' })
+        ])
+        : h('span', { class: 'hint-btn__text', text: '50 на 50 (за рекламу)' })
     ]);
   }
   function hintNote(slot) {
@@ -857,19 +1039,25 @@
   function lateRewardUseless(run) {
     var text = 'Реклама досмотрена, но вы уже вышли из теста — подсказка не пригодилась.';
     if (state && state !== run && state.test === run.test) text = 'Реклама досмотрена, но тест уже начат заново — подсказка не пригодилась.';
-    else if (state === run && run.ended) text = 'Реклама досмотрена, но тест уже закончен — подсказка не пригодилась.';
+    else if (state === run && (run.ended || lastAnswered(run))) text = 'Реклама досмотрена, но тест уже закончен — подсказка не пригодилась.';
     toast(text);
   }
 
+  // На последний вопрос уже ответили — следующего не будет, подсказку не к чему применить
+  function lastAnswered(run) { return run.answered && run.idx + 1 >= run.total; }
+
   function grantHint(run, late) {
     // Ушёл из этого прохождения или тест уже закончен — подсказки нет (её не к чему применить)
-    if (!state || run !== state || state.ended || state.hintsLeft <= 0) return false;
+    if (!state || run !== state || state.ended || state.hintsLeft <= 0 || lastAnswered(state)) return false;
     state.hintsLeft--;
     adGrants++;
     AN.event('hint_granted', { level_id: state.test.id, step_index: state.idx + 1, late: !!late });
     hideToast();
     if (state.phase === 'ask' && !state.answered) applyHint();
-    else state.hintPending = true;   // сработает на следующем вопросе
+    else {
+      state.hintPending = true;   // сработает на следующем вопросе (или после картинки «запомни»)
+      if (state.answered) toast('Реклама досмотрена. Подсказка сработает на следующем вопросе.');
+    }
     return true;
   }
 
@@ -955,13 +1143,14 @@
   }
 
   /* ---------- баннер внизу ---------- */
-  // Баннер виден, только когда ему ничего не мешает: приложение готово, нет окна «Поделиться»,
-  // не ждём и не показываем рекламу за награду. Место под баннер держит CSS (--banner-h).
+  // Баннер виден, только когда ему ничего не мешает: приложение готово, нет окна «Поделиться»
+  // и «Выйти из теста?», не ждём и не показываем рекламу за награду. Сами окна и так стоят выше
+  // зоны баннера (--banner-zone), если площадка его не успела спрятать. Место под баннер держит CSS (--banner-h).
   var appReady = false;
   function updateBanner() {
     if (!PF || !PF.banner) return;
     var dialogOpen = window.QuizShare && QuizShare.isDialogOpen && QuizShare.isDialogOpen();
-    if (appReady && !dialogOpen && !adBusy && !adShowing) PF.banner.show(); else PF.banner.hide();
+    if (appReady && !dialogOpen && !exitDlg && !adBusy && !adShowing) PF.banner.show(); else PF.banner.hide();
   }
 
   /* ---------- результат ---------- */
@@ -980,6 +1169,8 @@
     state.phase = 'result';
     state.ended = true;
     AN.event('progression_completed', { level_id: t.id, score: score, total: total, hint_used: !!state.hintUsed, record: isRecord });
+    noteDaily(t, score, total);
+    passedThisRun = true;
     QuizShare.prepare(result);
 
     var bestLine = null;
@@ -1094,7 +1285,7 @@
 
   // Какие ключи хранилища читаем при запуске (одним вызовом)
   function storeKeys() {
-    var keys = ['sound'];
+    var keys = ['sound', 'daily', 'visits', 'fav'];
     tests.forEach(function (t) { keys.push('best:' + t.id, 'recent:' + t.id); });
     return keys;
   }
@@ -1118,6 +1309,7 @@
       if (t) { try { history.replaceState(null, '', urlWithTest(t.id)); } catch (e) { /* ничего */ } }
     }
     var returning = tests.some(function (x) { return bestOf(x) != null; });
+    noteVisit();
     AN.event('app_opened', { entry: t ? 'test' : 'home', returning: returning });
     if (t) {
       // Пришли по ссылке ?test=…: под заставкой кладём главный экран,
@@ -1162,7 +1354,9 @@
     isReady: function () { return appReady; },
     adGrants: function () { return adGrants; },
     adBusy: function () { return adBusy; },
-    exitAsked: function () { return !!exitDlg; }
+    exitAsked: function () { return !!exitDlg; },
+    dailyTest: dailyTest,
+    dayNumber: dayNumber
   };
 
   start();

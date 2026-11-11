@@ -18,17 +18,27 @@
     things: ['🔑', '⏰', '🎈', '👓', '✂️', '🔔', '✏️', '📚', '☂️', '⚽', '🎸', '🎩'],
     water: ['🐟', '🐢', '🐝', '🐞', '🐌', '🐙', '🐬', '🐳']
   };
-  // Что считаем в вопросе «Сколько было …?» (родительный падеж множественного числа)
+  // Картинки для раскладок «сколько / чего больше всего»: все из одного набора и у всех есть название
+  // для «Сколько было …?» (родительный падеж мн. ч.). Повторяется любая из них, остальные клетки —
+  // другие из этого же набора, поэтому по набору нельзя угадать ни что повторялось, ни что спросят.
   var COUNTABLE = [
     { e: '🍎', name: 'яблок' }, { e: '⭐', name: 'звёздочек' }, { e: '🐟', name: 'рыбок' },
-    { e: '🎈', name: 'шариков' }, { e: '🌸', name: 'цветочков' }, { e: '🐱', name: 'котиков' }
+    { e: '🎈', name: 'шариков' }, { e: '🌸', name: 'цветочков' }, { e: '🐱', name: 'котиков' },
+    { e: '🍐', name: 'груш' }, { e: '🍋', name: 'лимонов' }, { e: '☀️', name: 'солнышек' },
+    { e: '🍄', name: 'грибочков' }, { e: '🐶', name: 'собачек' }, { e: '🔔', name: 'колокольчиков' },
+    { e: '🍓', name: 'клубничек' }, { e: '🐢', name: 'черепашек' }, { e: '⚽', name: 'мячиков' }
   ];
-  var FILLERS = ['🍐', '🍋', '🌙', '☀️', '🍄', '🐶', '🔔', '🍓', '🐢', '⚽'];
+  // Неверные варианты «Сколько было …?» — 4 соседних числа, верное — на случайном месте по величине.
+  // Вес места (0 — самое маленькое … 3 — самое большое) для каждого шага: при малом k (2–3)
+  // самым большим верное быть не может (нужны три меньших числа без нуля), поэтому на шаге из 5
+  // «третье» выпадает чаще, а на шаге из 7 клеток (k 3–5) — «самое большое»: в сумме по тесту каждое
+  // место ~21–29 % (проверяет tools/check.js на 2000 вопросах).
+  var COUNT_PLACE_WEIGHTS = { count5: [1, 1, 2, 0], count7: [1, 1, 1, 5] };
   var COLORS = [
     { color: '#e53935', name: 'Красного' }, { color: '#fdd835', name: 'Жёлтого' },
     { color: '#43a047', name: 'Зелёного' }, { color: '#1e88e5', name: 'Синего' },
     { color: '#8e24aa', name: 'Фиолетового' }, { color: '#212121', name: 'Чёрного' },
-    { color: '#fb8c00', name: 'Оранжевого' }, { color: '#a1662f', name: 'Коричневого' }
+    { color: '#fb8c00', name: 'Оранжевого' }, { color: '#81d4fa', name: 'Голубого' }
   ];
 
   function rnd(n) { return Math.floor(Math.random() * n); }
@@ -108,28 +118,43 @@
     } };
   }
 
+  // Случайное место по весам: веса [w0, w1, …] → номер
+  function weighted(w) {
+    var sum = 0, i;
+    for (i = 0; i < w.length; i++) sum += w[i];
+    var x = Math.random() * sum;
+    for (i = 0; i < w.length; i++) { x -= w[i]; if (x < 0 && w[i] > 0) return i; }
+    for (i = w.length - 1; i >= 0; i--) if (w[i] > 0) return i;
+    return 0;
+  }
+
   // n предметов, из них k одинаковых (остальные — разные): «сколько было …» / «чего было
   // больше всего» / «чего не было»
   function count(layout, n, cols, seconds, kMin, kMax) {
     return { make: function () {
       var target = COUNTABLE[rnd(COUNTABLE.length)];
       var k = kMin + rnd(kMax - kMin + 1);
-      var fill = pick(FILLERS.filter(function (f) { return f !== target.e; }), n - k);
+      var fill = pick(COUNTABLE.filter(function (c) { return c !== target; }), n - k).map(function (c) { return c.e; });
       var items = fill.slice();
       for (var i = 0; i < k; i++) items.push(target.e);
       var shown = shuffle(items);
-      var pool = FILLERS.concat(COUNTABLE.map(function (c) { return c.e; }));
-      pool = pool.filter(function (x, i) { return pool.indexOf(x) === i; });
+      var pool = COUNTABLE.map(function (c) { return c.e; });
       var v = rnd(3);
       if (v === 1) {
-        var wrongMost = fill.slice(0, 3);
+        // неверные — то, что тоже было на картинке, но по одному разу; не хватает — не показанные
+        var wrongMost = pick(fill, 3);
         if (wrongMost.length < 3) wrongMost = wrongMost.concat(pick(pool.filter(function (x) { return shown.indexOf(x) < 0; }), 3 - wrongMost.length));
         return q(layout, 'most', shown, cols, seconds, 'Чего было больше всего?', [target.e].concat(wrongMost));
       }
       if (v === 2) return askMissing(layout, shown, pool, cols, seconds);
-      // Неверные варианты — соседние числа
-      var wrong = [k - 1, k + 1, k + 2, k - 2].filter(function (x) { return x >= 1 && x <= n + 1; }).slice(0, 3);
-      return q(layout, 'count', shown, cols, seconds, 'Сколько было ' + target.name + '?', [String(k)].concat(wrong.map(String)), { target: target.e });
+      // 4 соседних числа от 1 до n + 1; верное k — на месте place по величине
+      var w = (COUNT_PLACE_WEIGHTS[layout] || [1, 1, 1, 1]).map(function (x, p) {
+        var lo = k - p;
+        return lo >= 1 && lo + 3 <= n + 1 ? x : 0;
+      });
+      var lo = k - weighted(w);
+      var nums = [lo, lo + 1, lo + 2, lo + 3].filter(function (x) { return x !== k; });
+      return q(layout, 'count', shown, cols, seconds, 'Сколько было ' + target.name + '?', [String(k)].concat(nums.map(String)), { target: target.e });
     } };
   }
 

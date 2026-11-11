@@ -163,6 +163,62 @@ button:disabled { cursor: default; }
   font-weight: 700;
 }
 .chip--best { background: #fff; color: var(--ink); }
+/* «Новинка»: тёмный текст на жёлтом — видно на карточке любого цвета */
+.chip--new { background: #ffe14d; color: #3a2a00; letter-spacing: 0.2px; box-shadow: 0 1px 0 rgba(0, 0, 0, 0.18); }
+
+/* ---------- «Тест дня» — крупная карточка над списком ---------- */
+.daily-card {
+  position: relative;
+  display: flex; flex-direction: column; gap: 8px;
+  width: 100%;
+  margin: 0 0 14px;
+  padding: 12px 16px 14px;
+  border: 4px solid #ffd54f;
+  border-radius: 24px;
+  text-align: left;
+  color: #fff;
+  background: linear-gradient(135deg, var(--c1), var(--c2));
+  box-shadow: 0 6px 0 rgba(0, 0, 0, 0.18), 0 12px 26px rgba(80, 40, 0, 0.18);
+  transition: transform .08s ease;
+  overflow: hidden;
+}
+.daily-card:active { transform: translateY(3px); }
+.daily-card__label {
+  align-self: flex-start;
+  padding: 3px 12px;
+  border-radius: 99px;
+  background: #ffe14d;
+  color: #3a2a00;
+  font-size: 17px; font-weight: 800;
+}
+.daily-card__main { display: flex; align-items: center; gap: 14px; }
+.daily-card__emoji { width: 66px; height: 66px; font-size: 42px; border-radius: 19px; }
+.daily-card__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.daily-card__title { font-size: 27px; font-weight: 900; line-height: 1.1; }
+.daily-card__state { font-size: 18px; font-weight: 700; line-height: 1.25; }
+.daily-card--done .daily-card__state::before { content: '✓ '; }
+@media (max-width: 400px) {
+  .daily-card__emoji { width: 56px; height: 56px; font-size: 36px; }
+  .daily-card__title { font-size: 24px; }
+  .daily-card__state { font-size: 17px; }
+}
+
+/* ---------- «Добавить в избранное» — одна строка, не с порога ---------- */
+.fav-offer {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: 20px;
+  background: var(--card);
+  border: 2px solid var(--line);
+}
+.fav-offer__text { margin: 0 0 10px; font-size: 18px; line-height: 1.3; }
+.fav-offer__btns { display: flex; gap: 10px; align-items: stretch; }
+.fav-offer__yes { flex: 1; min-height: 56px; font-size: 19px; padding: 8px 12px; background: var(--accent); color: #fff; box-shadow: 0 4px 0 rgba(0, 0, 0, 0.18); }
+.fav-offer__no {
+  flex: none; min-height: 56px; padding: 8px 14px;
+  border: 2px solid var(--line); border-radius: var(--radius);
+  background: #fff; color: var(--ink-soft); font-size: 18px; font-weight: 700;
+}
 .test-card__key { display: none; }
 
 /* ---------- вопрос ---------- */
@@ -279,17 +335,22 @@ button:disabled { cursor: default; }
   flex: none; width: auto; min-height: 56px; margin: 0;
   padding: 4px 12px 4px 8px; font-size: 18px; border-width: 2px; border-radius: 14px;
 }
+.hint-btn--top { flex-direction: row; gap: 6px; }
+.hint-btn__label { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.1; }
+.hint-btn__ad { font-size: 14px; font-weight: 700; color: var(--ink-soft); }
 .hint-note--top { flex: none; margin: 0; font-size: 16px; max-width: 150px; text-align: right; line-height: 1.2; }
 /* убранный подсказкой вариант: пустое место той же формы (кнопки не прыгают) */
 .answer.is-out { background: transparent; border-style: dashed; border-color: rgba(0, 0, 0, 0.12); box-shadow: none; }
 .answer.is-out .answer__text, .answer.is-out .answer__key { visibility: hidden; }
 
-/* ---------- окно «Выйти из теста?» ---------- */
+/* ---------- окна: «Выйти из теста?», «Загружаем рекламу…», «Поделиться» ---------- */
+/* Окно целиком выше зоны баннера (--banner-zone ставит platform.js, пока баннер вообще возможен —
+   даже если сейчас он спрятан): на площадке баннер рисует ВК/ОК поверх страницы, z-index не поможет. */
 .exit-dialog {
   position: fixed; inset: 0;
   z-index: 50;
   display: flex; align-items: center; justify-content: center;
-  padding: 24px;
+  padding: 16px 16px calc(var(--banner-zone, 0px) + 16px);
   background: rgba(30, 20, 10, 0.6);
 }
 .exit-dialog__box {
@@ -303,13 +364,14 @@ button:disabled { cursor: default; }
 }
 .exit-dialog__title { margin: 0; font-size: 26px; font-weight: 900; line-height: 1.2; }
 .exit-dialog__text { margin: 0 0 6px; font-size: 20px; color: var(--ink-soft); }
+.exit-dialog__btns { display: grid; gap: 12px; }
 
 /* ---------- окно «Загружаем рекламу…» ---------- */
 .ad-wait {
   position: fixed; inset: 0;
   z-index: 50;
   display: flex; align-items: center; justify-content: center;
-  padding: 24px;
+  padding: 16px 16px calc(var(--banner-zone, 0px) + 16px);
   background: rgba(30, 20, 10, 0.6);
 }
 .ad-wait__box {
@@ -330,6 +392,20 @@ button:disabled { cursor: default; }
   animation: spin 0.9s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* Невысокий экран (телефон в альбоме): окна компактнее, кнопки «Остаться / Выйти» в ряд —
+   так окно помещается над баннером даже на 568×320. */
+@media (max-height: 520px) {
+  .exit-dialog, .ad-wait { padding-top: 8px; padding-bottom: calc(var(--banner-zone, 0px) + 8px); }
+  .exit-dialog__box { max-width: 460px; gap: 8px; padding: 14px 16px; }
+  .exit-dialog__title { font-size: 22px; }
+  .exit-dialog__text { margin: 0; font-size: 18px; }
+  .exit-dialog__btns { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .exit-dialog .btn, .ad-wait .btn { min-height: 54px; font-size: 20px; padding-top: 8px; padding-bottom: 8px; }
+  .ad-wait__box { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px 14px; max-width: 420px; padding: 14px 16px; }
+  .ad-wait__box .spinner { width: 36px; height: 36px; border-width: 4px; }
+  .ad-wait__box p { margin: 0; font-size: 20px; text-align: left; }
+  .ad-wait__box .btn { grid-column: 1 / -1; }
+}
 
 @keyframes pop { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
 
@@ -486,12 +562,20 @@ body.on-result, body.on-intro { background: linear-gradient(160deg, var(--c1), v
 
 /* ---------- окно «Поделиться» (если системное недоступно) ---------- */
 .share-dialog {
-  position: fixed; inset: 0;
+  position: fixed; top: 0; left: 0; right: 0;
+  bottom: var(--banner-zone, 0px);   /* листается только выше зоны баннера */
   z-index: 20;
   background: rgba(30, 20, 10, 0.6);
   display: flex; align-items: flex-start; justify-content: center;
   padding: max(12px, env(safe-area-inset-top)) 12px 12px;
   overflow-y: auto;
+}
+/* полоса зоны баннера под окном — того же цвета (нажатие по ней, как мимо окна, — закрыть) */
+.share-dialog::after {
+  content: '';
+  position: fixed; left: 0; right: 0; bottom: 0;
+  height: var(--banner-zone, 0px);
+  background: rgba(30, 20, 10, 0.6);
 }
 .share-dialog__box {
   position: relative;
@@ -545,6 +629,16 @@ body.on-result, body.on-intro { background: linear-gradient(160deg, var(--c1), v
   z-index: 30;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+/* На экране вопроса сообщение — узкой строкой поверх верхней панели («‹ Тесты», «Вопрос N из 10»,
+   полоска хода): не закрывает ни вопрос, ни варианты, ни кнопки (размер и место ставит js). */
+.toast--bar {
+  max-width: none;
+  display: flex; align-items: center; justify-content: center;
+  padding: 6px 12px;
+  border-radius: 14px;
+  font-size: 17px;
+  line-height: 1.25;
+}
 
 /* ---------- мышь и клавиатура (компьютер): подсказки цифр ---------- */
 @media (hover: hover) and (pointer: fine) {
@@ -581,6 +675,9 @@ body.on-result, body.on-intro { background: linear-gradient(160deg, var(--c1), v
   .test-card__emoji { width: 60px; height: 60px; font-size: 36px; }
   .test-card__title { font-size: 22px; }
   .home__head { margin-bottom: 12px; }
+  .daily-card { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 6px 16px; padding: 10px 16px; }
+  .daily-card__emoji { width: 56px; height: 56px; font-size: 34px; }
+  .daily-card__title { font-size: 24px; }
   .topbar { margin-bottom: 10px; }
   .topbar__test { display: none; }
   .question { font-size: 22px; margin-bottom: 12px; }
@@ -626,6 +723,14 @@ body.on-result, body.on-intro { background: linear-gradient(160deg, var(--c1), v
   .result__text { font-size: 19px; margin-top: 8px !important; }
 }
 
+/* ---------- совсем невысокий альбом (568×320): «запомни» — подписи справа плотнее, «Готово» над баннером ---------- */
+@media (orientation: landscape) and (max-height: 340px) {
+  .quiz[data-fit] .memorize__title { font-size: 20px; line-height: 1.2; }
+  .quiz[data-fit] .memorize__hint { margin-bottom: 4px; font-size: 17px; }
+  .quiz[data-fit] .memorize .timer { height: 10px; margin: 2px 0 8px; }
+  .quiz[data-fit] .memorize .btn { min-height: 52px; font-size: 19px; padding-top: 6px; padding-bottom: 6px; }
+}
+
 /* ---------- очень узкие экраны (старые телефоны, ≤ 340px) ---------- */
 @media (max-width: 340px) {
   #app { padding-left: 10px; padding-right: 10px; }
@@ -640,6 +745,8 @@ body.on-result, body.on-intro { background: linear-gradient(160deg, var(--c1), v
   .test-card__emoji { width: 52px; height: 52px; font-size: 32px; border-radius: 14px; }
   .test-card__title { font-size: 22px; }
   .test-card__sub { font-size: 16px; }
+  .daily-card { padding: 10px 12px 12px; }
+  .daily-card__title { font-size: 24px; }
   .chip { font-size: 15px; padding: 2px 8px; }
   .answer { padding: 10px 12px; font-size: 20px; }
   .question { font-size: 22px; }

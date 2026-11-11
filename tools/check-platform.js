@@ -228,6 +228,54 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     await page.context().close();
   }
 
+  console.log("\nОкна целиком над зоной баннера (на площадке баннер рисует ВК/ОК поверх страницы):");
+  for (const vp of [{ width: 568, height: 320 }, { width: 640, height: 360 }, { width: 844, height: 390 }, { width: 360, height: 640 }, { width: 1920, height: 1080 }]) {
+    const label = vp.width + "×" + vp.height;
+    const page = await open(browser, BASE + "?fakead=silent&test=ussr", vp, { touch: vp.width < 1200 });
+    // всё в окне (рамка и кнопки) — выше зоны баннера; сама зона — сколько баннер может занять
+    const inWin = (sel) => page.evaluate((q) => {
+      const zone = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--banner-zone")) || 0;
+      const lim = window.innerHeight - zone;
+      const els = [...document.querySelectorAll(q)].filter((e) => e.getBoundingClientRect().height > 0);
+      return { zone, n: els.length, under: els.filter((e) => e.getBoundingClientRect().bottom > lim + 0.5 || e.getBoundingClientRect().top < 0).map((e) => (e.getAttribute("data-action") || e.className) + " " + Math.round(e.getBoundingClientRect().bottom) + ">" + Math.round(lim)) };
+    }, sel);
+    await tap(page, "[data-action='start']");
+    await answer(page, true); await nextQ(page); await page.waitForSelector(".answer");
+    if (vp.width > vp.height && vp.height <= 520) ok(/реклама/.test(await page.textContent(".hint-btn")), label + ": на кнопке «50 на 50» в альбоме видно, что это за рекламу («" + (await page.textContent(".hint-btn")).trim() + "»)");
+    await tap(page, "[data-action='back']"); await page.waitForSelector(".exit-dialog");
+    let r = await inWin(".exit-dialog__box, .exit-dialog .btn");
+    ok(r.zone === 90 && r.n === 3 && !r.under.length, label + ": «Выйти из теста?» с кнопками — над зоной баннера (" + r.zone + " px) " + JSON.stringify(r.under));
+    ok(await bannerHidden(page), label + ": пока окно «Выйти?» открыто — баннер спрятан");
+    await shot(page, "win-" + label + "-exit");
+    await page.click("[data-action='exit-stay']"); await page.waitForTimeout(150);
+    await tap(page, ".hint-btn"); await page.waitForSelector(".ad-wait");
+    r = await inWin(".ad-wait__box, .ad-wait .btn");
+    ok(r.n === 2 && !r.under.length, label + ": «Загружаем рекламу…» с «Отменой» — над зоной баннера " + JSON.stringify(r.under));
+    await shot(page, "win-" + label + "-adwait");
+    await page.click("[data-action='ad-cancel']"); await page.waitForSelector("#toast.show");
+    await page.waitForTimeout(300);
+    const tq = await page.evaluate(() => {
+      const t = document.getElementById("toast").getBoundingClientRect();
+      const hit = [...document.querySelectorAll(".question, .answer, .hint-btn")].filter((e) => { const b = e.getBoundingClientRect(); return b.height && t.bottom > b.top + 0.5 && t.top < b.bottom - 0.5 && t.right > b.left && t.left < b.right; });
+      return { pe: getComputedStyle(document.getElementById("toast")).pointerEvents, hit: hit.map((e) => e.className), box: Math.round(t.top) + "–" + Math.round(t.bottom) };
+    });
+    ok(tq.pe === "none" && !tq.hit.length, label + ": сообщение о рекламе (" + tq.box + ") не закрывает вопрос, варианты и кнопку подсказки " + JSON.stringify(tq.hit));
+    await shot(page, "win-" + label + "-toast");
+    for (let i = 1; i < 10; i++) { await answer(page, true); await nextQ(page); }
+    await page.waitForSelector(".result__card");
+    await tap(page, "[data-action='share']"); await page.waitForSelector("[data-share-dialog]");
+    const sh = await page.evaluate(() => {
+      const zone = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--banner-zone")) || 0;
+      const w = document.querySelector(".share-dialog").getBoundingClientRect();
+      const band = getComputedStyle(document.querySelector(".share-dialog"), "::after");
+      return { bottom: Math.round(w.bottom), lim: window.innerHeight - zone, band: band.position === "fixed" && Math.round(parseFloat(band.height)) === zone };
+    });
+    ok(sh.bottom <= sh.lim && sh.band, label + ": окно «Поделиться» листается только выше зоны баннера (низ " + sh.bottom + " ≤ " + sh.lim + "), зона закрыта тем же затемнением");
+    await shot(page, "win-" + label + "-share");
+    ok(!page._errors.length, label + ": ошибок в консоли нет " + JSON.stringify(page._errors));
+    await page.context().close();
+  }
+
   console.log("\n«50 на 50» — реклама досмотрена:");
   {
     const page = await open(browser, BASE + "?fakeadsec=1&test=ussr");
@@ -351,6 +399,7 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     await answer(page, true);
     await watchFakeAd(page);
     ok((await st(page)).pending === true && await page.evaluate(() => QuizApp.adGrants()) === 1, "вопрос уже отвечен — подсказка отложена на следующий вопрос");
+    ok(/сработает на следующем вопросе/.test(await page.textContent("#toast")), "…и сказано: «" + (await page.textContent("#toast")) + "»");
     await nextQ(page);
     await page.waitForSelector(".answer");
     ok(await hintApplied(page) && (await st(page)).idx === 1, "на вопросе 2 два неверных ответа убраны сразу");
@@ -374,6 +423,20 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     ok(s.phase === "memorize" && secs >= 2 && secs <= want, "после рекламы картинка «запомни» снова на экране, на оставшееся время (" + secs + " из " + want + " с, не меньше 1,5 с)");
     await passMemorize(page);
     ok(await hintApplied(page), "подсказка — на вопросе после картинки");
+    await page.context().close();
+  }
+  {
+    // опоздала, а человек уже ответил на ПОСЛЕДНИЙ вопрос — подсказку не к чему применить
+    const page = await open(browser, BASE + "?fakead=late&fakeadsec=1&test=ussr");
+    await tap(page, "[data-action='start']");
+    for (let i = 0; i < 9; i++) { await answer(page, true); await nextQ(page); }
+    await page.waitForSelector(".hint-btn");
+    await tap(page, ".hint-btn");
+    await page.waitForSelector("#toast.show", { timeout: 15000 });
+    await answer(page, true);
+    await watchFakeAd(page);
+    ok(await page.evaluate(() => QuizApp.adGrants()) === 0 && !(await st(page)).pending, "опоздала на последнем (уже отвеченном) вопросе — подсказка не выдана");
+    ok(/тест уже закончен.*не пригодилась/.test(await page.textContent("#toast")), "…и сказано: «" + (await page.textContent("#toast")) + "»");
     await page.context().close();
   }
   {
@@ -783,7 +846,8 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     const need = ["target_fps", "window_ms", "active_ms", "frame_count", "fps_avg", "fps_p10", "frame_time_p50_ms", "frame_time_p95_ms", "frame_time_p99_ms", "frame_time_max_ms", "frames_over_50ms", "frames_over_100ms", "frames_over_250ms", "frames_over_500ms", "frames_over_1000ms", "game_version"];
     ok(ps && need.every((k) => k in ps.data), "performance_sample со всеми полями гайда: " + (ps ? "кадров " + ps.data.frame_count + ", fps " + ps.data.fps_avg + ", версия " + ps.data.game_version : "нет"));
     ok(ev.every((x) => Object.values(x.data).every((v) => typeof v !== "string" || (v.length <= 40 && !/https?:|@/.test(v)))), "в отметках нет адресов, почты, длинных текстов");
-    const allowed = ["app_opened", "first_input", "progression_started", "progression_completed", "progression_failed", "replay_clicked", "share_clicked", "hint_offered", "hint_clicked", "hint_granted", "ad_reward_failed", "performance_sample"];
+    const allowed = ["app_opened", "first_input", "progression_started", "progression_completed", "progression_failed", "replay_clicked", "share_clicked", "hint_offered", "hint_clicked", "hint_granted", "ad_reward_failed", "performance_sample",
+      "daily_opened", "daily_completed", "favorites_offered", "favorites_clicked", "favorites_added"];
     const names = [...new Set(ev.map((x) => x.name))].sort();
     ok(names.every((n) => allowed.includes(n)), "только события из docs/analytics.md: " + names.join(", "));
     ok(!ev.some((x) => /answer|question/.test(x.name)), "отметок на каждый ответ нет");
@@ -791,6 +855,175 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     ok(sent === true, "отметки уходят через bridge.analytics.send");
     ok(!page._errors.length, "ошибок в консоли нет " + JSON.stringify(page._errors));
     await page.context().close();
+  }
+
+  console.log("\n«Новинка», «Тест дня», «Добавить в избранное»:");
+  // Подмена даты в странице: «сегодня» = target (мс), часы идут дальше как обычно
+  const atDate = (target) => ({ init: (t) => {
+    const RD = Date, off = t - RD.now();
+    function F(...a) { if (!(this instanceof F)) return RD(); return a.length ? new RD(...a) : new RD(RD.now() + off); }
+    F.prototype = RD.prototype; F.now = () => RD.now() + off; F.UTC = RD.UTC; F.parse = RD.parse;
+    window.Date = F;
+  }, arg: target });
+  async function openAt(url, vp, target, extra) {
+    const ctx = (extra && extra.ctx) || await browser.newContext({ viewport: vp || PHONE, deviceScaleFactor: 1, hasTouch: true, isMobile: true, locale: "ru-RU" });
+    if (target) { const d = atDate(target); await ctx.addInitScript(d.init, d.arg); }
+    if (extra && extra.init) await ctx.addInitScript(extra.init, extra.arg);
+    return open(browser, url, vp, { ctx });
+  }
+  async function playAll(page, testId, right) {
+    await reload(page, BASE + "?test=" + testId);
+    await tap(page, "[data-action='start']");
+    for (let i = 0; i < 10; i++) { if (i) await nextQ(page); await passMemorize(page); await answer(page, i < right); }
+    await nextQ(page); await page.waitForSelector(".result__card");
+  }
+  const D11 = Date.UTC(2026, 10, 11, 9, 0, 0);   // 11 ноября 2026, утро (UTC)
+  const DAY = 86400000;
+  {
+    const page = await openAt(BASE, PHONE, D11);
+    const chips = await page.evaluate(() => [...document.querySelectorAll(".test-card")].filter((c) => c.querySelector(".chip--new")).map((c) => c.getAttribute("data-test")).sort().join(","));
+    const want = await page.evaluate(() => QuizApp.tests.filter((t) => t.isNew).map((t) => t.id).sort().join(","));
+    ok(chips === want && chips.split(",").length === 6 && chips.split(",").length < await page.locator(".test-card").count(), "«Новинка» на первом запуске — только на новых тестах (" + chips + "), не на всех");
+    const d = await page.evaluate(() => { const c = document.querySelector(".daily-card"); const r = c.getBoundingClientRect(); const first = document.querySelector(".test-card").getBoundingClientRect(); return { id: c.getAttribute("data-test"), label: c.querySelector(".daily-card__label").textContent, top: r.top < first.top, h: Math.round(r.height), want: QuizApp.dailyTest(new Date()).id }; });
+    ok(d.id === d.want && /Тест дня · 11 ноября/.test(d.label) && d.top && d.h >= 100, "главный: сверху крупная карточка «" + d.label + "» — «" + d.id + "» (" + d.h + " px)");
+    await bannerClear(page, "главный с «Тестом дня»");
+    await shot(page, "home-daily-390x844");
+    // по дате, без сервера: один и тот же у всех, два дня подряд — разные, за 11 дней — все 11
+    const seq = await page.evaluate((t0) => { const out = []; for (let i = 0; i < 40; i++) out.push(QuizApp.dailyTest(new Date(t0 + i * 86400000)).id); return out; }, D11);
+    const n = await page.locator(".test-card").count();
+    ok(seq.every((x, i) => i === 0 || x !== seq[i - 1]) && new Set(seq.slice(0, n)).size === n, "«Тест дня» по номеру дня: два дня подряд разные, за " + n + " дней — все " + n + " (" + seq.slice(0, 4).join(", ") + " …)");
+    // «Новинка» исчезает после прохождения; «Тест дня» пройден — «Пройден сегодня: N из 10»
+    const daily = d.id;
+    const newTest = await page.evaluate((dl) => QuizApp.tests.find((t) => t.isNew && t.id !== dl).id, daily);
+    await playAll(page, newTest, 6);
+    await tap(page, "[data-action='home']"); await page.waitForSelector(".test-card");
+    ok(await page.locator(".test-card[data-test='" + newTest + "'] .chip--new").count() === 0 && await page.locator(".chip--new").count() === 5, "«Новинка» исчезла с пройденного «" + newTest + "», на других осталась");
+    await tap(page, ".daily-card"); await page.waitForSelector("[data-action='start']");
+    ok(new URL(page.url()).searchParams.get("test") === daily, "нажал «Тест дня» — заставка теста «" + daily + "»");
+    await tap(page, "[data-action='start']");
+    for (let i = 0; i < 10; i++) { if (i) await nextQ(page); await passMemorize(page); await answer(page, i < 8); }
+    await nextQ(page); await page.waitForSelector(".result__card");
+    await tap(page, "[data-action='home']"); await page.waitForSelector(".daily-card");
+    const doneTxt = await page.textContent(".daily-card__state");
+    ok(/Пройден сегодня: 8 из 10, завтра новый/.test(doneTxt), "после прохождения: «" + doneTxt + "»");
+    await shot(page, "home-daily-done-390x844");
+    let ev = await events(page);
+    ok(ev.some((e) => e.name === "daily_opened" && e.data.level_id === daily && e.data.done === false), "отметка daily_opened level_id=" + daily);
+    ok(ev.filter((e) => e.name === "daily_completed").length === 1 && ev.some((e) => e.name === "daily_completed" && e.data.level_id === daily && e.data.score === 8), "отметка daily_completed (одна, score=8)");
+    ok(ev.some((e) => e.name === "progression_started" && e.data.source === "daily"), "progression_started source=daily");
+    ok(!page._errors.length, "ошибок в консоли нет " + JSON.stringify(page._errors));
+    // тот же день, новый запуск — «пройден» помнится; на следующий день — другой тест и снова «не пройден»
+    const ctx = page.context();
+    const same = await openAt(BASE, PHONE, D11 + 3600000, { ctx });
+    ok(/Пройден сегодня: 8 из 10/.test(await same.textContent(".daily-card__state")) && await same.getAttribute(".daily-card", "data-test") === daily, "тот же день, новый запуск: тот же тест дня, «Пройден сегодня» помнится");
+    const ctx2 = await browser.newContext({ viewport: PHONE, deviceScaleFactor: 1, hasTouch: true, isMobile: true, locale: "ru-RU", storageState: await ctx.storageState() });
+    const next = await openAt(BASE, PHONE, D11 + DAY, { ctx: ctx2 });
+    const nd = await next.evaluate(() => ({ id: document.querySelector(".daily-card").getAttribute("data-test"), label: document.querySelector(".daily-card__label").textContent, state: document.querySelector(".daily-card__state").textContent }));
+    ok(nd.id !== daily && /12 ноября/.test(nd.label) && !/Пройден/.test(nd.state), "на следующий день (подменили дату): «" + nd.label + "» — другой тест «" + nd.id + "», не пройден");
+    await ctx2.close();
+    await ctx.close();
+  }
+  {
+    // 360×640: главный с «Тестом дня» и «Новинкой»
+    const page = await openAt(BASE, { width: 360, height: 640 }, D11);
+    await bannerClear(page, "360×640 главный с «Тестом дня»");
+    await shot(page, "home-daily-360x640");
+    await page.context().close();
+    const pl = await openAt(BASE, { width: 640, height: 360 }, D11);
+    await bannerClear(pl, "640×360 главный с «Тестом дня»");
+    ok(await noSideScroll(pl), "640×360: нет прокрутки вбок");
+    await shot(pl, "home-daily-640x360");
+    await pl.context().close();
+  }
+  {
+    // Обёртка Platform над Bridge: вне площадки — ничего; во ВК (isReal) — то, что умеет social
+    const page = await open(browser, BASE);
+    const w = await page.evaluate(async () => {
+      const out = { off: Platform.favoritesKind() };
+      const soc = bridge.social, saved = Platform.isReal;
+      const desc = (k) => Object.getOwnPropertyDescriptor(Object.getPrototypeOf(soc), k);
+      const set = (fav, home, fails) => {
+        Object.defineProperty(soc, "isAddToFavoritesSupported", { configurable: true, get: () => fav });
+        Object.defineProperty(soc, "isAddToHomeScreenSupported", { configurable: true, get: () => home });
+        soc.addToFavorites = () => { out.calledFav = true; return fails ? Promise.reject(new Error("no")) : Promise.resolve(); };
+        soc.addToHomeScreen = () => { out.calledHome = true; return Promise.resolve(); };
+      };
+      Platform.isReal = true;
+      set(true, true, false); out.both = Platform.favoritesKind(); out.addOk = await Platform.addToFavorites();
+      set(true, false, true); out.addNo = await Platform.addToFavorites();
+      set(false, true, false); out.home = Platform.favoritesKind(); out.addHome = await Platform.addToFavorites();
+      set(false, false, false); out.none = Platform.favoritesKind();
+      Platform.isReal = saved;
+      return out;
+    });
+    ok(w.off === "", "вне площадки (GitHub Pages) избранное не предлагается: favoritesKind = ''");
+    ok(w.both === "favorites" && w.addOk === true && w.calledFav && w.addNo === false, "площадка умеет избранное: bridge.social.addToFavorites (добавил — true, передумал — false)");
+    ok(w.home === "home_screen" && w.addHome === true && w.calledHome && w.none === "", "умеет только главный экран — bridge.social.addToHomeScreen; ничего не умеет — ''");
+    await page.context().close();
+  }
+  {
+    // Предложение «в избранное»: не на первом заходе, не вне площадки, на 3-м заходе (дне) после теста;
+    // «Не надо» — больше не предлагаем; ничего не нажал — снова не раньше, чем через 3 дня
+    const seedVisits = { init: (a) => { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); localStorage.setItem("quiz-time:visits", JSON.stringify({ days: a.days, last: Math.floor(a.t / 86400000) - 1 })); } }, arg: { days: 2, t: D11 } };
+    const fake = (page, ok2) => page.evaluate((good) => { window.__fav = 0; Platform.favoritesKind = () => "favorites"; Platform.addToFavorites = () => { window.__fav++; return Promise.resolve(good); }; }, ok2);
+    // 1-й заход на площадке
+    let page = await openAt(BASE, PHONE, D11);
+    await fake(page, true);
+    await playAll(page, "nature", 5); await fake(page, true);
+    await tap(page, "[data-action='home']"); await page.waitForSelector(".test-card");
+    ok(await page.locator(".fav-offer").count() === 0, "1-й заход: после теста «в избранное» не предлагаем");
+    await page.context().close();
+    // вне площадки, хоть и 5-й день
+    page = await openAt(BASE, PHONE, D11, { init: seedVisits.init, arg: { days: 4, t: D11 } });
+    await playAll(page, "nature", 5);
+    await tap(page, "[data-action='home']"); await page.waitForSelector(".test-card");
+    ok(await page.locator(".fav-offer").count() === 0, "вне площадки (5-й день) — не предлагаем");
+    await page.context().close();
+    // 3-й день на площадке: до теста — нет, после теста на главном — есть; «Не надо» — больше никогда
+    page = await openAt(BASE, PHONE, D11, seedVisits);
+    await fake(page, true);
+    ok(await page.locator(".fav-offer").count() === 0 && await page.evaluate(() => QuizStore.get("visits").days) === 3, "3-й день: с порога (до теста) не предлагаем");
+    await playAll(page, "nature", 5); await fake(page, true);
+    await tap(page, "[data-action='home']"); await page.waitForSelector(".test-card");
+    ok(await page.locator(".fav-offer [data-action='fav-yes']").count() === 1 && /в избранное/.test(await page.textContent(".fav-offer")), "3-й день, прошёл тест, вернулся на главный — строка «⭐ Добавить в избранное»");
+    await bannerClear(page, "главный с предложением «в избранное»");
+    await shot(page, "home-fav-390x844");
+    let ev = await events(page);
+    ok(ev.filter((e) => e.name === "favorites_offered").length === 1 && ev.some((e) => e.name === "favorites_offered" && e.data.kind === "favorites"), "отметка favorites_offered kind=favorites (одна)");
+    await page.click("[data-action='fav-no']"); await page.waitForTimeout(100);
+    ok(await page.locator(".fav-offer").count() === 0 && (await page.evaluate(() => QuizStore.get("fav"))).state === "no", "«Не надо» — строка убрана, отказ запомнен");
+    await playAll(page, "nature", 6);
+    await tap(page, "[data-action='home']"); await page.waitForSelector(".test-card");
+    ok(await page.locator(".fav-offer").count() === 0, "после «Не надо» больше не предлагаем");
+    const p2 = await openAt(BASE, PHONE, D11 + 5 * DAY, { ctx: page.context() });
+    await fake(p2, true); await playAll(p2, "nature", 5); await fake(p2, true);
+    await tap(p2, "[data-action='home']"); await p2.waitForSelector(".test-card");
+    ok(await p2.locator(".fav-offer").count() === 0, "после «Не надо» не предлагаем и через 5 дней");
+    await page.context().close();
+    // «Добавить»: окно площадки, добавил — отметки и больше не предлагаем
+    page = await openAt(BASE, PHONE, D11, seedVisits);
+    await fake(page, true); await playAll(page, "nature", 5); await fake(page, true);
+    await tap(page, "[data-action='home']"); await page.waitForSelector(".fav-offer");
+    await tap(page, "[data-action='fav-yes']"); await page.waitForTimeout(150);
+    ev = await events(page);
+    ok(await page.evaluate(() => window.__fav) === 1 && ev.some((e) => e.name === "favorites_clicked") && ev.some((e) => e.name === "favorites_added" && e.data.kind === "favorites"), "«Добавить в избранное» — окно площадки, отметки favorites_clicked и favorites_added");
+    ok(await page.locator(".fav-offer").count() === 0 && (await page.evaluate(() => QuizStore.get("fav"))).state === "yes", "добавил — строка убрана, больше не предлагаем");
+    await page.context().close();
+    // предложили, ничего не нажал: в тот же день снова — нет; через 3 дня — снова
+    page = await openAt(BASE, PHONE, D11, seedVisits);
+    await fake(page, true); await playAll(page, "nature", 5); await fake(page, true);
+    await tap(page, "[data-action='home']"); await page.waitForSelector(".fav-offer");
+    const ctx = page.context();
+    const again = await openAt(BASE, PHONE, D11 + 3600000, { ctx });
+    await fake(again, true); await playAll(again, "nature", 5); await fake(again, true);
+    await tap(again, "[data-action='home']"); await again.waitForSelector(".test-card");
+    ok(await again.locator(".fav-offer").count() === 0, "ничего не нажал — в тот же день при новом запуске не предлагаем");
+    const later = await openAt(BASE, PHONE, D11 + 3 * DAY, { ctx });
+    await fake(later, true); await playAll(later, "nature", 5); await fake(later, true);
+    await tap(later, "[data-action='home']"); await later.waitForSelector(".test-card");
+    ok(await later.locator(".fav-offer").count() === 1, "…а через 3 дня — снова (не чаще раза в несколько дней)");
+    ok(!later._errors.length, "ошибок в консоли нет " + JSON.stringify(later._errors));
+    await ctx.close();
   }
 
   console.log("\nОткрытие файлом:");

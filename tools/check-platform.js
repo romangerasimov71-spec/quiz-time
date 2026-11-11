@@ -421,6 +421,35 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     await page.context().close();
   }
   {
+    // Площадка не приняла запись (storage.set упал), а читать с неё можно: при следующем
+    // запуске виден новый рекорд из localStorage (помечен «не доехало»), и он дописывается на площадку
+    const page = await open(browser, BASE);
+    const r = await page.evaluate(async () => {
+      const cloud = { "quiz-time:best:ussr": "5" }, sets = [];
+      let failSet = true;
+      const fake = {
+        get: (keys) => Promise.resolve(keys.map((k) => cloud[k] || "")),
+        set: (k, v) => { sets.push(k.join(",")); if (failSet) return Promise.reject(new Error("net")); k.forEach((x, i) => { cloud[x] = v[i]; }); return Promise.resolve(); }
+      };
+      const saved = Platform.bridge.storage;
+      Object.defineProperty(Platform.bridge, "storage", { configurable: true, get: () => fake });
+      await Platform.save({ "quiz-time:best:ussr": 9 });
+      const marked = JSON.parse(localStorage.getItem("__platform_unsynced") || "[]");
+      failSet = false;
+      const first = await Platform.load(["quiz-time:best:ussr", "quiz-time:sound"]);
+      await new Promise((res) => setTimeout(res, 50));
+      const after = { cloud: cloud["quiz-time:best:ussr"], mark: localStorage.getItem("__platform_unsynced") };
+      const second = await Platform.load(["quiz-time:best:ussr"]);
+      Object.defineProperty(Platform.bridge, "storage", { configurable: true, get: () => saved });
+      return { marked, first, after, second, sets };
+    });
+    ok(r.marked.includes("quiz-time:best:ussr"), "запись на площадку упала — значение в localStorage с пометкой «не доехало»");
+    ok(r.first["quiz-time:best:ussr"] === 9, "следующий запуск: виден новый рекорд 9, а не старый 5 с площадки");
+    ok(r.after.cloud === "9" && r.after.mark === null, "непринятая запись дописана на площадку, пометка снята");
+    ok(r.second["quiz-time:best:ussr"] === 9, "дальше рекорд читается с площадки: 9");
+    await page.context().close();
+  }
+  {
     // Bridge не загрузился (заблокирован) — запасной localStorage, всё работает
     const ctx = await browser.newContext({ viewport: PHONE, locale: "ru-RU" });
     await ctx.route("**/playgama-bridge.js", (r) => r.abort());

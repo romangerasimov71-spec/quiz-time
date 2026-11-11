@@ -16,7 +16,9 @@
  *   Platform.load(keys)        — прочитать сохранённое: { ключ: значение | null }.
  *   Platform.save({ключ: значение}) — сохранить все изменённые ключи одним вызовом.
  *                                Хранилище Bridge (во ВК и ОК — облако игрока); без Bridge —
- *                                запасной localStorage. Во ВК/ОК ключ очищается до [A-Za-z0-9_-]
+ *                                запасной localStorage. Площадка не приняла запись — она ложится
+ *                                в localStorage с пометкой «не доехало»: при следующем load()
+ *                                берётся она (а не старое с площадки) и снова уходит на площадку. Во ВК/ОК ключ очищается до [A-Za-z0-9_-]
  *                                (правило ВК), в браузере остаётся как есть.
  *   Platform.rewardedAvailable() — можно ли показать рекламу за награду (кнопку иначе прятать).
  *   Platform.showRewarded(opts) — показать рекламу за награду. Ответ — Promise:
@@ -169,6 +171,17 @@
   // так сохранённое раньше не теряется. Ключи вида «sonnik_recent» не меняются нигде.
   function pkey(k) { return P.isReal ? String(k).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 100) : String(k); }
 
+  // Записи, которые не доехали до хранилища площадки (bridge.storage.set упал) и лежат пока
+  // только в localStorage. При следующем запуске берём их вместо площадочных (там старое)
+  // и пробуем дописать на площадку ещё раз.
+  var UNSYNCED = "__platform_unsynced";
+  function unsynced() { var v = lsGet(UNSYNCED); return Array.isArray(v) ? v : []; }
+  function markUnsynced(keys, on) {
+    var list = unsynced().filter(function (k) { return keys.indexOf(k) < 0; });
+    if (on) list = list.concat(keys);
+    lsSet(UNSYNCED, list.length ? list : null);
+  }
+
   // Прочитать все ключи одним вызовом. Ответ: { ключ: значение | null }.
   P.load = function (keys) {
     var fromLocal = function () {
@@ -182,11 +195,13 @@
     var got = Promise.resolve().then(function () { return bridge.storage.get(keys.map(pkey)); });
     return Promise.race([got, slow]).then(function (data) {
       if (data === "__slow") return fromLocal();
-      var out = {};
+      var out = {}, retry = {}, late = unsynced();
       keys.forEach(function (k, i) {
         var v = Array.isArray(data) ? data[i] : (data && typeof data === "object" ? data[pkey(k)] : null);
         out[k] = decode(v);
+        if (late.indexOf(k) >= 0) { out[k] = lsGet(k); retry[k] = out[k]; }   // не доехало — местное новее
       });
+      if (Object.keys(retry).length) P.save(retry);
       return out;
     }, function () { return fromLocal(); });
   };
@@ -199,7 +214,8 @@
     if (!P.hasBridge || !safe(function () { return bridge.storage; }, null)) return Promise.resolve(toLocal());
     var vals = keys.map(function (k) { return obj[k] == null ? "" : JSON.stringify(obj[k]); });
     return Promise.resolve().then(function () { return bridge.storage.set(keys.map(pkey), vals); })
-      .then(function () { return true; }, function () { return toLocal(); });
+      .then(function () { if (unsynced().length) markUnsynced(keys, false); return true; },
+        function () { toLocal(); markUnsynced(keys, true); return true; });   // площадка не приняла — помним, что не доехало
   };
 
   /* ---------------- реклама за награду ---------------- */

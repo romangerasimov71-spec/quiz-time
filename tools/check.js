@@ -5,12 +5,19 @@
      node tools/check.js                 — все проверки
      node tools/check.js --shots /путь   — плюс скриншоты всех экранов в эту папку
      node tools/check.js --only memory   — только один тест (по id) на основных экранах
-     node tools/check.js --extra-only    — только блок «Дополнительно» (быстрее, ~3 мин)
+     node tools/check.js --extra-only    — только данные, выбор вопросов и блок «Дополнительно» (~4 мин)
+   Весь прогон с 11 тестами — около 10 минут.
 
    Что делает:
    - поднимает маленький локальный сервер с папкой репозитория;
-   - на трёх экранах (телефон-портрет 390×844, телефон-альбом 844×390, компьютер 1280×800)
-     проходит ВСЕ тесты до конца: тапом, мышью и клавиатурой (1–4, Enter), с заставкой;
+   - проверяет файлы тестов: у теста с запасом ровно 50 вопросов (20 лёгких, 20 средних,
+     10 трудных по полю d), 4 разных варианта, вопросы не повторяются, длины, «А вы знали?»,
+     контраст белого на цветах теста;
+   - выбор вопросов: 100 прохождений каждого теста — всегда 10, 4/4/2 по сложности,
+     от лёгких к трудным, без повторов внутри, повтор прошлого прохождения минимален;
+   - на телефоне-портрете 390×844 проходит ВСЕ тесты до конца, на телефоне-альбоме 844×390
+     и компьютере 1280×800 — по два теста (первый и «Проверь память»): тапом, мышью и
+     клавиатурой (1–4, Enter), с заставкой;
    - проверяет: заставку теста, «Вопрос N из 10», цвет верного/неверного, «А вы знали?»,
      перемешивание вариантов и вопросов, генерацию вопросов «запомни» (ответ верен по картинке),
      обратный отсчёт секунд, защиту от двойного тапа и зажатого Enter, итоговый счёт и звание,
@@ -114,11 +121,31 @@ const NO_STORAGE_STUB = `
   Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new Error('storage blocked'); } });
 `;
 
+// all: true — пройти все тесты; иначе только первый и «Проверь память» (чтобы прогон был быстрым)
 const VIEWPORTS = [
-  { name: 'телефон-портрет 390×844', short: 'phone', viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, mode: 'touch', share: 'web-share', waitTimer: true },
+  { name: 'телефон-портрет 390×844', short: 'phone', viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, mode: 'touch', share: 'web-share', waitTimer: true, all: true },
   { name: 'телефон-альбом 844×390 (без системного «Поделиться»)', short: 'land', viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, mode: 'touch', share: 'dialog-touch' },
   { name: 'компьютер 1280×800', short: 'desk', viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false, deviceScaleFactor: 1, mode: 'mouse+keys', share: 'dialog-desk' }
 ];
+
+/* Сколько вопросов в прохождении и есть ли запас (как в js/app.js: perRun, по умолчанию 10) */
+const PER_RUN = 10;
+function runLen(t) { const n = parseInt(t.perRun, 10) > 0 ? parseInt(t.perRun, 10) : PER_RUN; return Math.min(n, t.questions.length); }
+function pooled(t) { return t.questions.length > runLen(t); }
+function level(q) { const d = parseInt(q.d, 10); return d === 1 || d === 3 ? d : 2; }
+/* Сколько брать из каждой группы сложности (своя копия правила: 40% / остальное / 20%,
+   нехватку добираем из соседней группы) */
+function expectedQuotas(n, have) {
+  const want = { 1: Math.round(n * 0.4), 3: Math.round(n * 0.2) };
+  want[2] = n - want[1] - want[3];
+  const take = { 1: Math.min(want[1], have[1]), 2: Math.min(want[2], have[2]), 3: Math.min(want[3], have[3]) };
+  const nb = { 1: [2, 3], 2: [1, 3], 3: [2, 1] };
+  for (const d of [1, 2, 3]) {
+    let miss = want[d] - Math.min(want[d], have[d]);
+    for (const x of nb[d]) { const e = Math.min(miss, have[x] - take[x]); if (e > 0) { take[x] += e; miss -= e; } }
+  }
+  return take;
+}
 
 async function shot(page, name) {
   if (!SHOTS || !page.screenshot) return;
@@ -225,11 +252,13 @@ async function checkIntro(page, vp, test, where) {
   const info = await page.evaluate(() => ({
     title: (document.querySelector('.intro__title') || {}).textContent,
     count: (document.querySelector('.intro__count') || {}).textContent,
+    fresh: !!document.querySelector('.intro__fresh'),
     text: (document.querySelector('.intro__text') || {}).textContent,
     emoji: (document.querySelector('.intro__emoji') || {}).textContent
   }));
   check(info.title === test.title, where, `заставка: название «${info.title}»`);
-  check(info.count === `${test.questions.length} вопросов`, where, `заставка: «${info.count}»`);
+  check(info.count === `${runLen(test)} вопросов`, where, `заставка: «${info.count}», ожидалось «${runLen(test)} вопросов»`);
+  check(info.fresh === pooled(test), where, `заставка: строка «Каждый раз — новые вопросы» ${info.fresh ? 'есть у теста без запаса' : 'не показана'}`);
   check(info.emoji === test.emoji && info.text && info.text.length > 10, where, 'заставка: нет эмодзи или строки о тесте');
   check(testParam(page) === test.id, where, `в адресе нет ?test=${test.id}`);
   await auditContrast(page, where + '/заставка');
@@ -238,12 +267,15 @@ async function checkIntro(page, vp, test, where) {
 /* Пройти один тест (с экрана первого вопроса). targetScore — сколько ответить верно. */
 async function playTest(page, vp, test, targetScore, opts) {
   const where = `${vp.short}/${test.id}`;
-  const total = test.questions.length;
+  const total = runLen(test);
   const how = vp.mode === 'touch' ? 'touch' : 'mouse';
   let correctAtFirst = 0;
   const qs = await page.evaluate(() => JSON.parse(JSON.stringify(window.QuizApp.state().questions)));
   check(qs.length === total, where, `в прохождении ${qs.length} вопросов`);
-  if (!test.keepOrder) {
+  if (pooled(test)) {
+    const ds = qs.map(level);
+    check(ds.every((d, i) => i === 0 || d >= ds[i - 1]), where, `вопросы идут не от лёгких к трудным: ${ds.join(',')}`);
+  } else if (!test.keepOrder) {
     const half = Math.ceil(total / 2);
     const firstHalf = new Set(test.questions.slice(0, half).map((q) => q.q));
     check(qs.slice(0, half).every((q) => firstHalf.has(q.q)), where, 'перемешивание вынесло трудный вопрос в первую половину');
@@ -331,7 +363,7 @@ async function playTest(page, vp, test, targetScore, opts) {
     }
 
     if (vp.short === 'phone') {
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(400);
       const visible = await page.evaluate(() => {
         const r = document.querySelector('.next-btn').getBoundingClientRect();
         return r.top >= 0 && r.bottom <= window.innerHeight + 1;
@@ -375,7 +407,7 @@ async function checkResult(page, vp, test, score) {
   const num = (await page.textContent('.result__num')).trim();
   const scoreLine = (await page.textContent('.result__score')).replace(/\s+/g, ' ').trim();
   check(num === String(score), where, `на экране результата ${num}, ожидалось ${score}`);
-  check(scoreLine === `${score} из ${test.questions.length}`, where, `строка счёта «${scoreLine}»`);
+  check(scoreLine === `${score} из ${runLen(test)}`, where, `строка счёта «${scoreLine}»`);
   const rank = expectedRank(test, score);
   const rankText = (await page.textContent('.result__rank')).trim();
   check(rankText === rank.title, where, `звание «${rankText}», ожидалось «${rank.title}»`);
@@ -387,7 +419,7 @@ async function checkResult(page, vp, test, score) {
 
 function expectedShareText(test, score) {
   const rank = expectedRank(test, score);
-  return `Мой результат в тесте «${test.title}»: ${score} из ${test.questions.length} — «${rank.title}»! А ты сколько наберёшь? Пройди тест: ${APP_URL}?test=${test.id}`;
+  return `Мой результат в тесте «${test.title}»: ${score} из ${runLen(test)} — «${rank.title}»! А ты сколько наберёшь? Пройди тест: ${APP_URL}?test=${test.id}`;
 }
 
 async function checkShare(page, vp, test, score, downloadsDir) {
@@ -479,6 +511,13 @@ async function runViewport(browser, base, vp, tests, downloadsDir) {
   // Главный экран
   const cards = await page.$$eval('.test-card', (els) => els.map((e) => e.getAttribute('data-test')));
   check(cards.length === tests.length, vp.short, `карточек тестов ${cards.length}, ожидалось ${tests.length}`);
+  const order = await page.evaluate(() => window.QuizApp.order);
+  const pos = (id) => (order.indexOf(id) < 0 ? order.length : order.indexOf(id));
+  check(cards.every((id, i) => i === 0 || pos(id) >= pos(cards[i - 1])), vp.short, `порядок карточек не по списку TEST_ORDER: ${cards.join(', ')}`);
+  const chips = await page.$$eval('.test-card .chip', (els) => els.map((e) => e.textContent));
+  check(chips.length === tests.length && chips.every((c, i) => c === `${runLen(tests[i])} вопросов`), vp.short, `на карточках число вопросов: ${chips.join(', ')}`);
+  const keyHints = await page.$$eval('.test-card__key', (els) => els.map((e) => e.textContent));
+  check(keyHints.length === Math.min(9, tests.length), vp.short, `подсказок клавиш на карточках ${keyHints.length}, нужно ${Math.min(9, tests.length)}`);
   check(!(await page.$('.chip--best')), vp.short, 'на чистом запуске уже показан лучший результат');
   await noHorizontalScroll(page, vp.short);
   await shot(page, `${vp.short}-home`);
@@ -493,15 +532,20 @@ async function runViewport(browser, base, vp, tests, downloadsDir) {
   check((await page.getAttribute('.sound-btn', 'data-sound')) === 'on', vp.short, 'кнопка звука не включилась обратно');
 
   const targets = [10, 7, 5, 2, 8, 9, 3, 6]; // покрывают все 4 ступени званий
-  for (let ti = 0; ti < tests.length; ti++) {
-    const test = tests[ti];
-    if (ONLY && test.id !== ONLY) continue;
+  // Какие тесты проходим целиком на этом экране
+  let play = tests;
+  if (ONLY) play = tests.filter((t) => t.id === ONLY);
+  else if (!vp.all) play = [tests[0], tests.find((t) => t.id === 'memory') || tests[1]].filter((t, i, a) => t && a.indexOf(t) === i);
+  for (let ti = 0; ti < play.length; ti++) {
+    const test = play[ti];
+    const homeIdx = tests.indexOf(test);
     const where = `${vp.short}/${test.id}`;
     const target = targets[ti % targets.length];
     const keys = vp.mode === 'mouse+keys' && ti % 2 === 1; // на компьютере каждый второй тест — клавиатурой
-    process.stdout.write(`  ${test.title}: ${keys ? 'клавиатура' : vp.mode === 'touch' ? 'тап' : 'мышь'}, цель ${target}/10 … `);
+    process.stdout.write(`  ${test.title}: ${keys ? 'клавиатура' : vp.mode === 'touch' ? 'тап' : 'мышь'}, цель ${target}/${runLen(test)} … `);
 
-    if (keys) { await ready(page); await page.keyboard.press(String(ti + 1)); }
+    // клавиши 1–9 на главном есть только у первых девяти тестов
+    if (keys && homeIdx < 9) { await ready(page); await page.keyboard.press(String(homeIdx + 1)); }
     else await press(page, `.test-card[data-test="${test.id}"]`, how);
     await checkIntro(page, vp, test, where);
     if (ti === 0 || test.id === 'memory') await shot(page, `${vp.short}-${test.id}-intro`);
@@ -517,11 +561,11 @@ async function runViewport(browser, base, vp, tests, downloadsDir) {
     const stored = await page.evaluate((id) => localStorage.getItem('quiz-time:best:' + id), test.id);
     check(stored === String(target), where, `лучший результат в хранилище «${stored}», ожидалось ${target}`);
 
-    if (ti === 0) {
+    if (ti === 0 && vp.all) {
       // «Пройти ещё раз»: тест начинается заново (без заставки), рекорд не затирается худшим результатом
       await press(page, '[data-action="again"]', how);
       await page.waitForSelector('.topbar__count');
-      check((await page.textContent('.topbar__count')).trim() === `Вопрос 1 из ${test.questions.length}`, where, '«Пройти ещё раз» не начал тест с первого вопроса');
+      check((await page.textContent('.topbar__count')).trim() === `Вопрос 1 из ${runLen(test)}`, where, '«Пройти ещё раз» не начал тест с первого вопроса');
       await playTest(page, vp, test, 4, { keys: false });
       await checkResult(page, vp, test, 4);
       const best = (await page.textContent('.result__best')) || '';
@@ -533,7 +577,7 @@ async function runViewport(browser, base, vp, tests, downloadsDir) {
     await page.waitForSelector(`.test-card[data-test="${test.id}"]`);
     check(testParam(page) === null, where, `после «Другие тесты» в адресе остался ?test=${testParam(page)}`);
     const chip = await page.$eval(`.test-card[data-test="${test.id}"]`, (e) => (e.querySelector('.chip--best') || {}).textContent || '');
-    check(chip.includes(`${target} из ${test.questions.length}`), where, `на карточке лучший результат «${chip}», ожидалось ${target} из ${test.questions.length}`);
+    check(chip.includes(`${target} из ${runLen(test)}`), where, `на карточке лучший результат «${chip}», ожидалось ${target} из ${runLen(test)}`);
     console.log('готово');
   }
   await shot(page, `${vp.short}-home-after`);
@@ -628,6 +672,66 @@ async function extraChecks(browser, base, tests, port) {
     await ctx.close();
   }
 
+  // 1б) Выбор вопросов в тестах с запасом: 100 прохождений подряд (как настоящий игрок)
+  {
+    const ctx = await newContext(browser, phoneVp);
+    const page = await ctx.newPage();
+    attachErrorWatch(page, 'выбор');
+    await page.goto(base);
+    await page.waitForSelector('.test-card');
+    const res = await page.evaluate(() => {
+      const out = {};
+      for (const t of window.QuizApp.tests) {
+        try { localStorage.removeItem('quiz-time:recent:' + t.id); } catch (e) { /* ничего */ }
+        const runs = [];
+        for (let i = 0; i < 100; i++) runs.push(window.QuizApp.prepareQuestions(t).map((q) => ({ q: q.q, d: q.d })));
+        out[t.id] = runs;
+      }
+      return out;
+    });
+    let any = false;
+    for (const t of tests) {
+      if (!pooled(t)) continue;
+      any = true;
+      const w = `выбор/${t.id}`;
+      const n = runLen(t);
+      const avail = { 1: 0, 2: 0, 3: 0 };
+      t.questions.forEach((q) => avail[level(q)]++);
+      const want = expectedQuotas(n, avail);
+      const runs = res[t.id];
+      const shown = new Set();
+      let overlapSum = 0, overlapMax = 0, badCount = 0, badMix = 0, badOrder = 0, dup = 0, overBound = 0;
+      runs.forEach((r, k) => {
+        r.forEach((q) => shown.add(q.q));
+        if (r.length !== n) badCount++;
+        if (new Set(r.map((q) => q.q)).size !== r.length) dup++;
+        const ds = r.map(level);
+        if (!ds.every((d, i) => i === 0 || d >= ds[i - 1])) badOrder++;
+        const got = { 1: 0, 2: 0, 3: 0 }; ds.forEach((d) => got[d]++);
+        if (got[1] !== want[1] || got[2] !== want[2] || got[3] !== want[3]) badMix++;
+        if (k > 0) {
+          const prev = runs[k - 1];
+          const prevSet = new Set(prev.map((q) => q.q));
+          const ov = r.filter((q) => prevSet.has(q.q)).length;
+          overlapSum += ov; overlapMax = Math.max(overlapMax, ov);
+          // меньше нельзя: в группе не хватает вопросов, которых не было в прошлый раз
+          let bound = 0;
+          for (const d of [1, 2, 3]) bound += Math.max(0, got[d] - (avail[d] - prev.filter((q) => level(q) === d).length));
+          if (ov > bound) overBound++;
+        }
+      });
+      check(!badCount, w, `${badCount} из 100 прохождений не по ${n} вопросов`);
+      check(!dup, w, `${dup} из 100 прохождений с повтором вопроса внутри`);
+      check(!badOrder, w, `${badOrder} из 100 прохождений не от лёгких к трудным`);
+      check(!badMix, w, `${badMix} из 100 прохождений не ${want[1]}/${want[2]}/${want[3]} по сложности`);
+      check(!overBound, w, `${overBound} из 99 прохождений повторяют прошлое больше, чем нужно`);
+      check(shown.size === t.questions.length, w, `за 100 прохождений показано ${shown.size} вопросов из ${t.questions.length}`);
+      console.log(`  ${t.id}: 100×${n}, по сложности ${want[1]}/${want[2]}/${want[3]}, повторов с прошлым разом: в среднем ${(overlapSum / 99).toFixed(2)}, максимум ${overlapMax}; показаны все ${shown.size}`);
+    }
+    if (!any) console.log('  тестов с запасом вопросов пока нет');
+    await ctx.close();
+  }
+
   // 2) Двойной тап по «Дальше», зажатый Enter, «Готово» не раньше 1,5 с
   {
     const ctx = await newContext(browser, { viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
@@ -698,14 +802,16 @@ async function extraChecks(browser, base, tests, port) {
 
   // 4) Испорченный рекорд («99 из 10») не показывается
   {
-    const ctx = await newContext(browser, phoneVp, `try { localStorage.setItem('quiz-time:best:${regular.id}', '99'); localStorage.setItem('quiz-time:best:${memory.id}', '-3'); } catch (e) {}`);
+    const ctx = await newContext(browser, phoneVp, `try { localStorage.setItem('quiz-time:best:${regular.id}', '99'); localStorage.setItem('quiz-time:best:${memory.id}', '-3'); localStorage.setItem('quiz-time:recent:${regular.id}', '{испорчено'); } catch (e) {}`);
     const page = await ctx.newPage();
     attachErrorWatch(page, 'рекорд');
     await page.goto(base);
     await page.waitForSelector('.test-card');
     const chips = await page.$$eval('.chip--best', (els) => els.map((e) => e.textContent));
     check(chips.length === 0, 'рекорд', `показан испорченный рекорд: ${chips.join(', ')}`);
-    console.log('  испорченный рекорд в хранилище не показывается');
+    const n = await page.evaluate((id) => window.QuizApp.prepareQuestions(window.QuizApp.tests.find((t) => t.id === id)).length, regular.id);
+    check(n === runLen(regular), 'рекорд', `с испорченной памятью «что показывали» в прохождении ${n} вопросов`);
+    console.log('  испорченный рекорд и испорченная память показанных вопросов не мешают');
     await ctx.close();
   }
 
@@ -753,21 +859,26 @@ async function extraChecks(browser, base, tests, port) {
     await shot(page, 'w280-result');
     await ctx.close();
 
-    // 360×640: на результате кнопка «Поделиться» видна без прокрутки (самое длинное звание + строка рекорда)
+    // 360×640: на результате кнопка «Поделиться» видна без прокрутки (строка рекорда + самые
+    // длинные звание и фраза из всех тестов: проходим только эти случаи, не больше трёх)
     const seed = tests.map((t) => `localStorage.setItem('quiz-time:best:${t.id}', '10');`).join('');
     const ctx2 = await newContext(browser, { viewport: { width: 360, height: 640 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 }, SHARE_STUB + `try { ${seed} } catch (e) {}`);
     const page2 = await ctx2.newPage();
     attachErrorWatch(page2, '360×640');
-    for (const t of tests) {
-      const longest = t.ranks.reduce((a, b) => (b.title.length > a.title.length ? b : a));
-      const score = Math.min(t.questions.length, longest.min === 0 ? 1 : longest.min);
+    const allRanks = [];
+    tests.forEach((t) => t.ranks.forEach((r) => allRanks.push({ t, r })));
+    const top = (f) => allRanks.reduce((a, b) => (f(b) > f(a) ? b : a));
+    const cases = [top((x) => x.r.title.length), top((x) => x.r.text.length), top((x) => x.r.title.length * 2 + x.r.text.length)]
+      .filter((x, i, a) => a.indexOf(x) === i);
+    for (const { t, r: rank } of cases) {
+      const score = Math.min(runLen(t), rank.min === 0 ? 1 : rank.min);
       await page2.goto(base + '?test=' + t.id);
       await press(page2, '[data-action="start"]', 'touch');
       await quickPlay(page2, score, 'touch');
       const r = await page2.evaluate(() => ({ b: document.querySelector('[data-action="share"]').getBoundingClientRect().bottom, h: window.innerHeight, best: !!document.querySelector('.result__best') }));
-      check(r.b <= r.h, `360×640/${t.id}`, `«Поделиться результатом» ниже экрана: ${Math.round(r.b)} > ${r.h} (звание «${longest.title}»)`);
+      check(r.b <= r.h, `360×640/${t.id}`, `«Поделиться результатом» ниже экрана: ${Math.round(r.b)} > ${r.h} (звание «${rank.title}»)`);
       check(r.best, `360×640/${t.id}`, 'нет строки лучшего результата (проверка неполная)');
-      if (t.id === tests[0].id) await shot(page2, 'w360-result');
+      await shot(page2, `w360-result-${t.id}-${rank.min}`);
     }
     await ctx2.close();
     console.log('  280px без прокрутки вбок; на 360×640 «Поделиться» видно сразу');
@@ -779,7 +890,8 @@ async function extraChecks(browser, base, tests, port) {
     const ctx = await newContext(browser, { viewport: size, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
     const page = await ctx.newPage();
     attachErrorWatch(page, tag);
-    for (let run = 0; run < 2; run++) {
+    const runs = size.height < 380 ? 2 : 1; // на самом низком экране — два прохождения
+    for (let run = 0; run < runs; run++) {
       await page.goto(base + '?test=' + memory.id);
       await press(page, '[data-action="start"]', 'touch');
       for (let i = 0; i < 10; i++) {
@@ -829,20 +941,43 @@ async function extraChecks(browser, base, tests, port) {
     await ctx.close();
   }
 
-  // 8) Данные тестов: 10 вопросов, 4 разных варианта, звания покрывают 0–10, контраст цветов
+  // 8) Данные тестов. Тест без запаса — ровно 10 вопросов; тест с запасом — ровно 50:
+  //    20 лёгких (d:1), 20 средних (d:2), 10 трудных (d:3). Варианты, длины, звания, контраст цветов.
+  const seenIds = new Set();
   for (const t of tests) {
     const w = `данные/${t.id}`;
-    check(t.questions.length === 10, w, `вопросов ${t.questions.length}, нужно 10`);
+    check(!seenIds.has(t.id), w, 'два теста с одинаковым id'); seenIds.add(t.id);
     check(!!t.intro, w, 'нет строки для заставки (intro)');
+    check(!t.subtitle || t.subtitle.length <= 35, w, `подзаголовок длиннее 35 символов: «${t.subtitle}»`);
+    if (pooled(t)) {
+      check(t.questions.length === 50, w, `вопросов ${t.questions.length}, в тесте с запасом нужно ровно 50`);
+      const cnt = { 1: 0, 2: 0, 3: 0 };
+      t.questions.forEach((q, i) => {
+        if (!(q.d === 1 || q.d === 2 || q.d === 3)) fail(w, `вопрос ${i + 1}: сложность d = ${q.d}, нужно 1, 2 или 3`);
+        else cnt[q.d]++;
+      });
+      check(cnt[1] === 20 && cnt[2] === 20 && cnt[3] === 10, w, `по сложности ${cnt[1]}/${cnt[2]}/${cnt[3]}, нужно 20/20/10`);
+    } else {
+      check(t.questions.length === 10, w, `вопросов ${t.questions.length}, нужно 10 (или 50 с полем d)`);
+    }
+    const texts = new Map();
     t.questions.forEach((q, i) => {
       if (q.make) return; // генерируемые проверены выше
       check(Array.isArray(q.a) && q.a.length === 4, w, `вопрос ${i + 1}: вариантов не 4`);
       check(new Set(q.a).size === q.a.length, w, `вопрос ${i + 1}: повторяются варианты`);
-      if (q.type === 'memory') check(Array.isArray(q.show) && q.show.length >= 3, w, `вопрос ${i + 1}: пустая картинка`);
-      else check(!!q.fact, w, `вопрос ${i + 1}: нет пояснения «А вы знали?»`);
+      if (q.type === 'memory') { check(Array.isArray(q.show) && q.show.length >= 3, w, `вопрос ${i + 1}: пустая картинка`); return; }
+      check(typeof q.q === 'string' && q.q.trim().length > 0, w, `вопрос ${i + 1}: нет текста вопроса`);
+      const key = String(q.q).trim().toLowerCase();
+      check(!texts.has(key), w, `вопрос ${i + 1} повторяет вопрос ${texts.get(key)}: «${q.q}»`);
+      texts.set(key, i + 1);
+      check(String(q.q).length <= 120, w, `вопрос ${i + 1}: длина ${String(q.q).length} > 120 («${String(q.q).slice(0, 40)}…»)`);
+      (q.a || []).forEach((x) => check(typeof x === 'string' && x.trim() && x.length <= 40, w, `вопрос ${i + 1}: вариант «${x}» пустой или длиннее 40`));
+      check(!!q.fact, w, `вопрос ${i + 1}: нет пояснения «А вы знали?»`);
     });
-    check(t.ranks.length === 4 && t.ranks[0].min === 0, w, 'званий не 4 или первое не с 0');
+    check(t.ranks.length === 4 && t.ranks.map((r) => r.min).join(',') === '0,4,7,9', w, `звания: нужно 4 с порогами 0/4/7/9, сейчас ${t.ranks.map((r) => r.min).join('/')}`);
+    t.ranks.forEach((r) => check(r.title && r.text, w, `у звания с ${r.min} нет названия или фразы`));
     for (const c of [t.color, t.color2 || t.color]) {
+      if (!check(/^#[0-9a-f]{6}$/i.test(String(c)), w, `цвет «${c}» не в виде #rrggbb`)) continue;
       const r = contrast([255, 255, 255], rgb(c));
       check(r >= 4.5, w, `белый текст на цвете ${c}: контраст ${r.toFixed(2)}:1 < 4,5`);
       // кнопки «Пройти ещё раз»/«Другие тесты»: белый на 22% чёрного поверх цвета
@@ -850,6 +985,12 @@ async function extraChecks(browser, base, tests, port) {
       const r2 = contrast([255, 255, 255], under);
       check(r2 >= 4.5, w, `кнопки на результате: контраст ${r2.toFixed(2)}:1`);
     }
+  }
+  const colors = new Map();
+  for (const t of tests) {
+    const c = String(t.color).toLowerCase();
+    check(!colors.has(c), `данные/${t.id}`, `цвет ${t.color} такой же, как у теста ${colors.get(c)}`);
+    colors.set(c, t.id);
   }
   const accent = contrast([255, 255, 255], rgb('#bf360c'));
   check(accent >= 4.5, 'данные', `--accent главного экрана: ${accent.toFixed(2)}:1`);

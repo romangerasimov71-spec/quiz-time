@@ -6,10 +6,16 @@
   var INPUT_LOCK_MS = 400;     // после смены экрана столько игнорируем нажатия (двойной тап)
   var READY_DELAY_MS = 1500;   // «Готово, спрашивайте!» активна не раньше, чем через столько
   var HOME_COLOR = '#bf360c';
+  var PER_RUN = 10;            // вопросов за одно прохождение (у теста можно задать perRun)
+  var HOME_KEYS = 9;           // клавиши 1–9 на главном экране — для первых девяти тестов
+
+  // Порядок тестов на главном экране (по id). Теста нет в index.html — он просто
+  // пропускается; тест, которого нет в списке, встаёт в конец.
+  var TEST_ORDER = ['ussr', 'songs', 'kino', 'quotes', 'actors', 'cartoons', 'newyear', 'transport', 'cities', 'nature', 'memory'];
 
   var app = document.getElementById('app');
   var toastEl = document.getElementById('toast');
-  var tests = (window.QUIZ_TESTS || []).filter(validTest);
+  var tests = sortTests((window.QUIZ_TESTS || []).filter(validTest));
 
   var state = null;      // текущее прохождение
   var screen = 'home';   // home | intro | question | result
@@ -22,6 +28,13 @@
       Array.isArray(t.ranks) && t.ranks.length;
     if (!ok && window.console) console.warn('Тест пропущен, неверный формат:', t && t.id);
     return ok;
+  }
+
+  function sortTests(list) {
+    var pos = function (t) { var i = TEST_ORDER.indexOf(t.id); return i < 0 ? TEST_ORDER.length : i; };
+    return list.map(function (t, i) { return { t: t, i: i }; })
+      .sort(function (a, b) { return pos(a.t) - pos(b.t) || a.i - b.i; })
+      .map(function (x) { return x.t; });
   }
 
   function h(tag, attrs, children) {
@@ -72,7 +85,14 @@
     return n + ' вопросов';
   }
 
-  function bestOf(test) { return QuizStore.getBest(test.id, test.questions.length); }
+  // Сколько вопросов в одном прохождении (из 50 в запасе берём 10)
+  function runLength(test) {
+    var n = parseInt(test.perRun, 10);
+    if (!(n > 0)) n = PER_RUN;
+    return Math.min(n, test.questions.length);
+  }
+
+  function bestOf(test) { return QuizStore.getBest(test.id, runLength(test)); }
 
   function setTheme(color) {
     var meta = document.querySelector('meta[name="theme-color"]');
@@ -200,7 +220,7 @@
     setTheme(HOME_COLOR);
     var cards = tests.map(function (t, i) {
       var best = bestOf(t);
-      var total = t.questions.length;
+      var total = runLength(t);
       return h('button', {
         class: 'test-card', type: 'button', 'data-test': t.id,
         style: '--c1:' + t.color + ';--c2:' + (t.color2 || t.color),
@@ -215,7 +235,7 @@
             best != null ? h('span', { class: 'chip chip--best', text: '🏆 ' + best + ' из ' + total }) : null
           ])
         ]),
-        h('span', { class: 'test-card__key', 'aria-hidden': 'true', text: String(i + 1) })
+        i < HOME_KEYS ? h('span', { class: 'test-card__key', 'aria-hidden': 'true', text: String(i + 1) }) : null
       ]);
     });
 
@@ -247,9 +267,10 @@
       h('section', { class: 'intro__card' }, [
         h('div', { class: 'intro__emoji', 'aria-hidden': 'true', text: t.emoji }),
         h('h1', { class: 'intro__title', text: t.title }),
-        h('p', { class: 'intro__count', text: wordQuestions(t.questions.length) }),
+        h('p', { class: 'intro__count', text: wordQuestions(runLength(t)) }),
+        t.questions.length > runLength(t) ? h('p', { class: 'intro__fresh', text: 'Каждый раз — новые вопросы' }) : null,
         h('p', { class: 'intro__text', text: t.intro || t.subtitle || '' }),
-        best != null ? h('p', { class: 'intro__best', text: '🏆 Ваш лучший результат: ' + best + ' из ' + t.questions.length }) : null,
+        best != null ? h('p', { class: 'intro__best', text: '🏆 Ваш лучший результат: ' + best + ' из ' + runLength(t) }) : null,
         startBtn
       ])
     ]), 'intro');
@@ -257,13 +278,84 @@
 
   /* ---------- прохождение ---------- */
 
-  // Готовим вопросы на это прохождение: «запомни» генерируются заново,
-  // обычные перемешиваются внутри первой и второй половины (лёгкие остаются в начале).
+  /* Вопросы на это прохождение.
+     Тест, где вопросов не больше perRun (10): берём все; «запомни» генерируются заново,
+     обычные перемешиваются внутри первой и второй половины (лёгкие остаются в начале).
+     Тест с запасом (50 вопросов): берём случайные 4 лёгких (d:1) + 4 средних (d:2) +
+     2 трудных (d:3), идут от лёгких к трудным, внутри группы перемешаны. В первую
+     очередь — те, что не показывали в двух прошлых прохождениях (помним в QuizStore). */
   function prepareQuestions(test) {
-    var qs = test.questions.map(function (q) { return typeof q.make === 'function' ? q.make() : q; });
-    if (test.keepOrder) return qs;
-    var half = Math.ceil(qs.length / 2);
-    return shuffle(qs.slice(0, half)).concat(shuffle(qs.slice(half)));
+    var n = runLength(test);
+    var qs;
+    if (test.questions.length <= n) {
+      qs = test.questions.slice();
+      if (!test.keepOrder) {
+        var half = Math.ceil(qs.length / 2);
+        qs = shuffle(qs.slice(0, half)).concat(shuffle(qs.slice(half)));
+      }
+    } else {
+      qs = pickQuestions(test, n);
+    }
+    return qs.map(function (q) { return typeof q.make === 'function' ? q.make() : q; });
+  }
+
+  function levelOf(q) { var d = parseInt(q.d, 10); return d === 1 || d === 3 ? d : 2; }
+
+  // Короткая метка вопроса для памяти «что уже показывали» (не зависит от порядка в файле)
+  function questionKey(q, i) {
+    var s = String(q.id || q.q || ('#' + i)), x = 5381;
+    for (var k = 0; k < s.length; k++) x = ((x * 33) ^ s.charCodeAt(k)) >>> 0;
+    return x.toString(36);
+  }
+
+  var RECENT_RUNS = 2;
+  function loadRecent(testId) {
+    try {
+      var v = JSON.parse(QuizStore.get('recent:' + testId) || '[]');
+      if (!Array.isArray(v)) return [];
+      return v.slice(0, RECENT_RUNS).map(function (r) { return Array.isArray(r) ? r.map(String) : []; });
+    } catch (e) { return []; }
+  }
+  function saveRecent(testId, recent) {
+    try { QuizStore.set('recent:' + testId, JSON.stringify(recent.slice(0, RECENT_RUNS))); } catch (e) { /* ничего */ }
+  }
+
+  // Сколько брать из каждой группы: для 10 — 4/4/2. Не хватает в группе — добираем из соседней.
+  function quotas(n, have) {
+    var q3 = Math.round(n * 0.2), q1 = Math.round(n * 0.4);
+    var want = { 1: q1, 2: n - q1 - q3, 3: q3 };
+    var take = {};
+    [1, 2, 3].forEach(function (d) { take[d] = Math.min(want[d], have[d]); });
+    var order = { 1: [2, 3], 2: [1, 3], 3: [2, 1] };
+    [1, 2, 3].forEach(function (d) {
+      var miss = want[d] - Math.min(want[d], have[d]);
+      order[d].forEach(function (nb) {
+        var extra = Math.min(miss, have[nb] - take[nb]);
+        if (extra > 0) { take[nb] += extra; miss -= extra; }
+      });
+    });
+    return take;
+  }
+
+  function pickQuestions(test, n) {
+    var recent = loadRecent(test.id);
+    // 0 — давно не показывали, 1 — было в позапрошлый раз, 2 — было в прошлый раз
+    var age = {};
+    for (var r = recent.length - 1; r >= 0; r--) recent[r].forEach(function (k) { age[k] = RECENT_RUNS - r; });
+    var groups = { 1: [], 2: [], 3: [] };
+    test.questions.forEach(function (q, i) {
+      groups[levelOf(q)].push({ q: q, key: questionKey(q, i), age: age[questionKey(q, i)] || 0 });
+    });
+    var take = quotas(n, { 1: groups[1].length, 2: groups[2].length, 3: groups[3].length });
+    var chosen = [], keys = [];
+    [1, 2, 3].forEach(function (d) {
+      var g = shuffle(groups[d]).map(function (x, i) { x.pos = i; return x; });
+      g.sort(function (a, b) { return a.age - b.age || a.pos - b.pos; });
+      var part = shuffle(g.slice(0, take[d]));
+      part.forEach(function (x) { chosen.push(x.q); keys.push(x.key); });
+    });
+    saveRecent(test.id, [keys].concat(recent));
+    return chosen;
   }
 
   function startTest(test) {
@@ -501,7 +593,7 @@
     }
     if (screen === 'home') {
       var n = parseInt(key, 10);
-      if (n >= 1 && n <= tests.length) { e.preventDefault(); openTest(tests[n - 1]); }
+      if (n >= 1 && n <= Math.min(tests.length, HOME_KEYS)) { e.preventDefault(); openTest(tests[n - 1]); }
       return;
     }
     if (screen === 'intro') {
@@ -552,7 +644,10 @@
     tests: tests,
     screen: function () { return screen; },
     state: function () { return state; },
-    prepareQuestions: prepareQuestions
+    prepareQuestions: prepareQuestions,
+    runLength: runLength,
+    levelOf: levelOf,
+    order: TEST_ORDER.slice()
   };
 
   boot();

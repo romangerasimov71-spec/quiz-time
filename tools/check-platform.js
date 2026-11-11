@@ -256,10 +256,11 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     await page.waitForTimeout(300);
     const tq = await page.evaluate(() => {
       const t = document.getElementById("toast").getBoundingClientRect();
-      const hit = [...document.querySelectorAll(".question, .answer, .hint-btn")].filter((e) => { const b = e.getBoundingClientRect(); return b.height && t.bottom > b.top + 0.5 && t.top < b.bottom - 0.5 && t.right > b.left && t.left < b.right; });
+      // в верхней панели (альбом) кнопка «50 на 50» — под сообщением: оно стоит «на её месте» и пропускает касания
+      const hit = [...document.querySelectorAll(".question, .answer, .hint-btn--above, .hint-btn--below, .next-btn")].filter((e) => { const b = e.getBoundingClientRect(); return b.height && t.bottom > b.top + 0.5 && t.top < b.bottom - 0.5 && t.right > b.left && t.left < b.right; });
       return { pe: getComputedStyle(document.getElementById("toast")).pointerEvents, hit: hit.map((e) => e.className), box: Math.round(t.top) + "–" + Math.round(t.bottom) };
     });
-    ok(tq.pe === "none" && !tq.hit.length, label + ": сообщение о рекламе (" + tq.box + ") не закрывает вопрос, варианты и кнопку подсказки " + JSON.stringify(tq.hit));
+    ok(tq.pe === "none" && !tq.hit.length, label + ": сообщение о рекламе (" + tq.box + ") — поверх верхней панели, не закрывает вопрос и варианты " + JSON.stringify(tq.hit));
     await shot(page, "win-" + label + "-toast");
     for (let i = 1; i < 10; i++) { await answer(page, true); await nextQ(page); }
     await page.waitForSelector(".result__card");
@@ -940,13 +941,15 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     const page = await open(browser, BASE);
     const w = await page.evaluate(async () => {
       const out = { off: Platform.favoritesKind() };
-      const soc = bridge.social, saved = Platform.isReal;
-      const desc = (k) => Object.getOwnPropertyDescriptor(Object.getPrototypeOf(soc), k);
+      // bridge.social подменяем целиком (свойства настоящего модуля Bridge оборачивает и запоминает)
+      const saved = Platform.isReal, realSoc = bridge.social;
       const set = (fav, home, fails) => {
-        Object.defineProperty(soc, "isAddToFavoritesSupported", { configurable: true, get: () => fav });
-        Object.defineProperty(soc, "isAddToHomeScreenSupported", { configurable: true, get: () => home });
-        soc.addToFavorites = () => { out.calledFav = true; return fails ? Promise.reject(new Error("no")) : Promise.resolve(); };
-        soc.addToHomeScreen = () => { out.calledHome = true; return Promise.resolve(); };
+        const soc = {
+          isAddToFavoritesSupported: fav, isAddToHomeScreenSupported: home,
+          addToFavorites: () => { out.calledFav = true; return fails ? Promise.reject(new Error("no")) : Promise.resolve(); },
+          addToHomeScreen: () => { out.calledHome = true; return Promise.resolve(); }
+        };
+        Object.defineProperty(bridge, "social", { configurable: true, get: () => soc });
       };
       Platform.isReal = true;
       set(true, true, false); out.both = Platform.favoritesKind(); out.addOk = await Platform.addToFavorites();
@@ -954,6 +957,7 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
       set(false, true, false); out.home = Platform.favoritesKind(); out.addHome = await Platform.addToFavorites();
       set(false, false, false); out.none = Platform.favoritesKind();
       Platform.isReal = saved;
+      Object.defineProperty(bridge, "social", { configurable: true, get: () => realSoc });
       return out;
     });
     ok(w.off === "", "вне площадки (GitHub Pages) избранное не предлагается: favoritesKind = ''");
@@ -990,7 +994,7 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     await shot(page, "home-fav-390x844");
     let ev = await events(page);
     ok(ev.filter((e) => e.name === "favorites_offered").length === 1 && ev.some((e) => e.name === "favorites_offered" && e.data.kind === "favorites"), "отметка favorites_offered kind=favorites (одна)");
-    await page.click("[data-action='fav-no']"); await page.waitForTimeout(100);
+    await tap(page, "[data-action='fav-no']"); await page.waitForTimeout(100);
     ok(await page.locator(".fav-offer").count() === 0 && (await page.evaluate(() => QuizStore.get("fav"))).state === "no", "«Не надо» — строка убрана, отказ запомнен");
     await playAll(page, "nature", 6);
     await tap(page, "[data-action='home']"); await page.waitForSelector(".test-card");

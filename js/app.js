@@ -521,7 +521,7 @@
     if (!favShownNow && f.offered != null && today() - f.offered < FAV_REPEAT_DAYS) return null;
     if (!favShownNow) {
       favShownNow = true;
-      QuizStore.set('fav', { offered: today() });
+      QuizStore.set('fav', { offered: today() }, true);
       AN.event('favorites_offered', { kind: kind });
     }
     var row;

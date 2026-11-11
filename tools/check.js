@@ -563,7 +563,7 @@ async function runViewport(browser, base, vp, tests, downloadsDir) {
   const order = await page.evaluate(() => window.QuizApp.order);
   const pos = (id) => (order.indexOf(id) < 0 ? order.length : order.indexOf(id));
   check(cards.every((id, i) => i === 0 || pos(id) >= pos(cards[i - 1])), vp.short, `порядок карточек не по списку TEST_ORDER: ${cards.join(', ')}`);
-  const chips = await page.$$eval('.test-card .chip', (els) => els.map((e) => e.textContent));
+  const chips = await page.$$eval('.test-card .chip:not(.chip--new)', (els) => els.map((e) => e.textContent));
   check(chips.length === tests.length && chips.every((c, i) => c === `${runLen(tests[i])} вопросов`), vp.short, `на карточках число вопросов: ${chips.join(', ')}`);
   const keyHints = await page.$$eval('.test-card__key', (els) => els.map((e) => e.textContent));
   const wantKeys = Array.from({ length: Math.min(10, tests.length) }, (x, i) => String((i + 1) % 10));   // 1–9 и 0 — десятый

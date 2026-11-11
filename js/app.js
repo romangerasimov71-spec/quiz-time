@@ -13,6 +13,11 @@
   // пропускается; тест, которого нет в списке, встаёт в конец.
   var TEST_ORDER = ['ussr', 'songs', 'kino', 'quotes', 'actors', 'cartoons', 'newyear', 'transport', 'cities', 'nature', 'memory'];
 
+  var CFG = window.APP_CONFIG || {};
+  var PF = window.Platform || null;      // площадка (platform.js); без неё — работаем как в браузере
+  var AN = window.Analytics || { init: function () {}, ready: function () {}, event: function () {}, once: function () {} };
+  var HINTS_PER_RUN = CFG.HINTS_PER_RUN == null ? 1 : CFG.HINTS_PER_RUN;   // «50 на 50» за прохождение
+
   var app = document.getElementById('app');
   var toastEl = document.getElementById('toast');
   var tests = sortTests((window.QUIZ_TESTS || []).filter(validTest));
@@ -115,6 +120,14 @@
     }, 3500);
   }
 
+  // Убрать подсказку сразу (и текст: это живая область для читалок — старое сообщение там не остаётся)
+  function hideToast() {
+    clearTimeout(toastTimer);
+    toastEl.classList.remove('show');
+    toastEl.textContent = '';
+    toastEl.hidden = true;
+  }
+
   function soundButton(extraClass) {
     var btn = h('button', {
       class: 'icon-btn sound-btn ' + (extraClass || ''), type: 'button',
@@ -156,6 +169,7 @@
   function render(node, name) {
     clearTimers();
     if (window.QuizShare && QuizShare.closeDialog) QuizShare.closeDialog();
+    updateBanner();
     screen = name;
     app.innerHTML = '';
     app.setAttribute('data-screen', name);
@@ -193,6 +207,7 @@
 
   // «‹ Тесты», «Другие тесты», Esc: шаг назад по истории (как кнопка «назад» телефона)
   function goHome() {
+    noteAbandon('back');
     if (history.state && history.state.quiz) {
       var before = screen;
       try { history.back(); } catch (e) { /* ничего */ }
@@ -205,13 +220,26 @@
   }
 
   window.addEventListener('popstate', function () {
+    // «Назад», пока ждём рекламу, — это «Отмена» (сообщать о ней некому: человек ушёл с вопроса)
+    if (adBusy && PF && PF.isWaitingRewarded && PF.isWaitingRewarded()) { cancelledByBack = true; PF.cancelRewarded(); }
+    noteAbandon('back');
     var t = testFromUrl();
-    if (t) showIntro(t); else showHome();
+    if (t) { introSource = 'home'; showIntro(t); } else showHome();
   });
+
+  /* Человек бросил тест посреди вопросов: «‹ Тесты», «назад», Esc (back) или закрыл приложение (exit).
+     Номер вопроса — где бросил. Одна отметка за прохождение. */
+  function noteAbandon(reason) {
+    if (!state || state.ended || (state.phase !== 'ask' && state.phase !== 'memorize')) return;
+    state.ended = true;
+    AN.event('progression_failed', { level_id: state.test.id, step_index: state.idx + 1, reason: reason });
+  }
 
   /* ---------- главный экран ---------- */
 
+  var introSource = 'home';   // откуда пришли на заставку: home (список тестов) / link (ссылка)
   function openTest(t) {
+    introSource = 'home';
     pushTest(t);
     showIntro(t);
   }
@@ -262,7 +290,7 @@
     document.body.style.setProperty('--c2', t.color2 || t.color);
     var best = bestOf(t);
     var startBtn = h('button', { class: 'btn btn--primary btn--start', type: 'button', 'data-action': 'start',
-      onclick: function () { startTest(t); } }, ['Начать']);
+      onclick: function () { startTest(t, introSource); } }, ['Начать']);
     render(h('main', { class: 'intro' }, [
       h('div', { class: 'result__top' }, [backButton(true), soundButton('sound-btn--light')]),
       h('section', { class: 'intro__card' }, [
@@ -312,13 +340,14 @@
   var RECENT_RUNS = 2;
   function loadRecent(testId) {
     try {
-      var v = JSON.parse(QuizStore.get('recent:' + testId) || '[]');
+      var v = QuizStore.get('recent:' + testId);
+      if (typeof v === 'string') v = JSON.parse(v);   // на всякий случай: строка в старом виде
       if (!Array.isArray(v)) return [];
       return v.slice(0, RECENT_RUNS).map(function (r) { return Array.isArray(r) ? r.map(String) : []; });
     } catch (e) { return []; }
   }
   function saveRecent(testId, recent) {
-    try { QuizStore.set('recent:' + testId, JSON.stringify(recent.slice(0, RECENT_RUNS))); } catch (e) { /* ничего */ }
+    try { QuizStore.set('recent:' + testId, recent.slice(0, RECENT_RUNS)); } catch (e) { /* ничего */ }
   }
 
   // Сколько брать из каждой группы: для 10 — 4/4/2. Не хватает в группе — добираем из соседней.
@@ -359,11 +388,13 @@
     return chosen;
   }
 
-  function startTest(test) {
+  function startTest(test, source) {
     QuizSound.unlock();
     setTheme(test.color);
     var qs = prepareQuestions(test);
-    state = { test: test, questions: qs, idx: 0, score: 0, total: qs.length, answered: false };
+    state = { test: test, questions: qs, idx: 0, score: 0, total: qs.length, answered: false,
+      hintsLeft: HINTS_PER_RUN, hintPending: false, hintUsed: false, hintOffered: false };
+    AN.event('progression_started', { level_id: test.id, source: source || 'home' });
     showQuestion();
   }
 
@@ -442,6 +473,7 @@
   function showMemorize(q) {
     var secs = q.seconds || 5;
     state.phase = 'memorize';
+    state.memoInterrupted = false;
     state.readyAt = Date.now() + READY_DELAY_MS;
     var endAt = Date.now() + secs * 1000;
     var bar = h('div', { class: 'timer__fill', style: 'animation-duration:' + secs + 's' });
@@ -493,13 +525,17 @@
       h('section', { class: 'ask' }, [
         h('h2', { class: 'question', text: q.q }),
         h('div', { class: 'answers' + (tiles ? ' answers--tiles' : '') }, buttons),
+        hintButton(),
         h('div', { class: 'feedback', hidden: true })
       ])
     ]), 'question');
+    // Подсказка, досмотренная, когда отвечать было нечего (опоздавшая реклама), — на этот вопрос
+    if (state.hintPending) { state.hintPending = false; applyHint(); }
   }
 
   function choose(i) {
-    if (!state || state.phase !== 'ask' || state.answered) return;
+    if (!state || state.phase !== 'ask' || state.answered || adBusy) return;
+    if (state.order[i] && state.order[i].out) return;     // убран подсказкой «50 на 50»
     QuizSound.unlock();
     state.answered = true;
     var q = state.questions[state.idx];
@@ -507,13 +543,15 @@
     var right = picked.correct;
     if (right) { state.score++; QuizSound.correct(); } else { QuizSound.wrong(); }
 
+    var hb = app.querySelector('.hint-btn');
+    if (hb) hb.remove();
     var btns = app.querySelectorAll('.answer');
     Array.prototype.forEach.call(btns, function (b, k) {
       b.disabled = true;
       var a = state.order[k];
       if (a.correct) b.classList.add('is-correct');
       else if (k === i) b.classList.add('is-wrong');
-      else b.classList.add('is-dim');
+      else if (!a.out) b.classList.add('is-dim');
       if (k === i) b.setAttribute('aria-label', (right ? 'Верно: ' : 'Неверно: ') + a.text);
     });
 
@@ -561,6 +599,151 @@
     else showQuestion();
   }
 
+  /* ---------- подсказка «50 на 50» за рекламу ---------- */
+  /* Решение Романа 11 ноя: за досмотренную рекламу (rewarded) два неверных варианта убираются.
+     Кнопка — на экране вопроса до ответа (на «запомни» — только после картинки), не больше
+     HINTS_PER_RUN (1) раза за прохождение. Награда — только за досмотренную рекламу. Опоздавшая
+     реклама (началась после «не загрузилась» или «Отмены»), досмотренная до конца, даёт подсказку
+     на текущий вопрос, если он ещё не отвечен, иначе — на следующий вопрос этого же прохождения.
+     Ушёл из прохождения (другой тест, «Пройти ещё раз», к списку) или тест уже закончен — подсказки нет. */
+  var adBusy = false;      // ждём рекламу (окно «Загружаем рекламу…»)
+  var adShowing = false;   // реклама на экране (в том числе опоздавшая)
+  var adGrants = 0;        // сколько подсказок выдано за этот запуск (для автотеста)
+  var cancelledByBack = false;
+  var AD_FAIL_TEXT = {
+    closed: 'Реклама закрыта раньше конца — подсказки нет. Можно попробовать ещё раз.',
+    error: 'Реклама сейчас недоступна. Попробуйте чуть позже.',
+    timeout: 'Реклама не загрузилась. Попробуйте чуть позже.'
+  };
+
+  function hintAvailable() {
+    return !!(state && state.hintsLeft > 0 && PF && PF.rewardedAvailable && PF.rewardedAvailable());
+  }
+
+  function hintButton() {
+    if (!hintAvailable() || state.hintPending) return null;
+    if (!state.hintOffered) {
+      state.hintOffered = true;
+      AN.event('hint_offered', { level_id: state.test.id, step_index: state.idx + 1 });
+    }
+    return h('button', { class: 'btn btn--ghost hint-btn', type: 'button', 'data-action': 'hint', onclick: startHintAd }, [
+      h('span', { class: 'hint-btn__icon', 'aria-hidden': 'true', text: '½' }),
+      h('span', { text: '50 на 50 (за рекламу)' })
+    ]);
+  }
+
+  // Убрать два неверных варианта на текущем вопросе
+  function applyHint() {
+    if (!state || state.phase !== 'ask' || state.answered) { if (state) state.hintPending = true; return; }
+    var wrong = [];
+    state.order.forEach(function (a, k) { if (!a.correct && !a.out) wrong.push(k); });
+    shuffle(wrong).slice(0, 2).forEach(function (k) {
+      state.order[k].out = true;
+      var b = app.querySelector('.answer[data-index="' + k + '"]');
+      if (b) { b.classList.add('is-out'); b.disabled = true; b.setAttribute('aria-hidden', 'true'); b.tabIndex = -1; }
+    });
+    state.hintUsed = true;
+    var hb = app.querySelector('.hint-btn');
+    if (hb) hb.remove();
+    var ask = app.querySelector('.ask .answers');
+    if (ask && !app.querySelector('.hint-note')) ask.insertAdjacentElement('afterend', h('p', { class: 'hint-note', role: 'status', text: '½ Подсказка: два неверных ответа убраны' }));
+  }
+
+  function grantHint(run, late) {
+    // Ушёл из этого прохождения или тест уже закончен — подсказки нет (её не к чему применить)
+    if (!state || run !== state || state.ended || state.hintsLeft <= 0) return false;
+    state.hintsLeft--;
+    adGrants++;
+    AN.event('hint_granted', { level_id: state.test.id, step_index: state.idx + 1, late: !!late });
+    hideToast();
+    if (state.phase === 'ask' && !state.answered) applyHint();
+    else state.hintPending = true;   // сработает на следующем вопросе
+    return true;
+  }
+
+  // Окно «ждём рекламу»: всё остальное не нажимается, есть «Отмена» (и Esc).
+  function adWaitOverlay() {
+    var cancel = h('button', { class: 'btn btn--ghost', type: 'button', 'data-action': 'ad-cancel',
+      onclick: function () { if (PF) PF.cancelRewarded(); } }, ['Отмена']);
+    var box = h('div', { class: 'ad-wait', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Загружаем рекламу' }, [
+      h('div', { class: 'ad-wait__box' }, [
+        h('div', { class: 'spinner', 'aria-hidden': 'true' }),
+        h('p', { role: 'status', text: 'Загружаем рекламу…' }),
+        cancel
+      ])
+    ]);
+    function trap(e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (PF) PF.cancelRewarded(); } }
+    document.addEventListener('keydown', trap, true);
+    document.body.appendChild(box);
+    document.body.classList.add('is-ad-wait');
+    app.setAttribute('inert', '');
+    try { cancel.focus({ preventScroll: true }); } catch (e) { /* ничего */ }
+    return function () {
+      document.removeEventListener('keydown', trap, true);
+      box.remove();
+      document.body.classList.remove('is-ad-wait');
+      app.removeAttribute('inert');
+    };
+  }
+
+  // Опоздавшая реклама открылась, пока показывали картинку «запомни»: таймер не должен идти
+  // за рекламой — когда реклама закроется, картинка покажется заново с полным временем.
+  function interruptMemorize() {
+    if (state && state.phase === 'memorize') { state.memoInterrupted = true; clearTimers(); }
+  }
+  function resumeAfterAd() {
+    updateBanner();
+    if (state && state.phase === 'memorize' && state.memoInterrupted && !adShowing && !(PF && PF.isPaused && PF.isPaused())) {
+      showMemorize(state.questions[state.idx]);
+    }
+  }
+
+  function startHintAd() {
+    if (adBusy || !state || state.phase !== 'ask' || state.answered || !hintAvailable() || inputLocked()) return;
+    var run = state;
+    AN.event('hint_clicked', { level_id: run.test.id, step_index: run.idx + 1 });
+    adBusy = true;
+    cancelledByBack = false;
+    updateBanner();
+    var done = adWaitOverlay();
+    PF.showRewarded({
+      placement: 'hint',
+      onOpen: function () { adShowing = true; updateBanner(); },
+      onLateOpen: function () { adShowing = true; hideToast(); updateBanner(); interruptMemorize(); },
+      onLateReward: function () { adShowing = false; grantHint(run, true); resumeAfterAd(); },
+      onLateFail: function (reason) {
+        adShowing = false;
+        AN.event('ad_reward_failed', { reason: AD_FAIL_TEXT[reason] ? reason : 'error', late: true });
+        if (run === state && !run.ended) toast(AD_FAIL_TEXT[reason] || AD_FAIL_TEXT.error);
+        resumeAfterAd();
+      }
+    }).then(function (res) {
+      done();
+      adBusy = false;
+      adShowing = false;
+      if (res && res.ok) {
+        grantHint(run, false);
+      } else {
+        var reason = res && AD_FAIL_TEXT[res.reason] ? res.reason : 'error';
+        AN.event('ad_reward_failed', { reason: reason, late: false });
+        if (!cancelledByBack && run === state && !run.ended) toast(AD_FAIL_TEXT[reason]);
+      }
+      resumeAfterAd();
+      var hb = app.querySelector('.hint-btn');
+      if (hb && !cancelledByBack) { try { hb.focus({ preventScroll: true }); } catch (e) { /* ничего */ } }
+    });
+  }
+
+  /* ---------- баннер внизу ---------- */
+  // Баннер виден, только когда ему ничего не мешает: приложение готово, нет окна «Поделиться»,
+  // не ждём и не показываем рекламу за награду. Место под баннер держит CSS (--banner-h).
+  var appReady = false;
+  function updateBanner() {
+    if (!PF || !PF.banner) return;
+    var dialogOpen = window.QuizShare && QuizShare.isDialogOpen && QuizShare.isDialogOpen();
+    if (appReady && !dialogOpen && !adBusy && !adShowing) PF.banner.show(); else PF.banner.hide();
+  }
+
   /* ---------- результат ---------- */
 
   function showResult() {
@@ -575,6 +758,8 @@
     var result = { test: t, score: score, total: total, rank: rank };
     state.result = result;
     state.phase = 'result';
+    state.ended = true;
+    AN.event('progression_completed', { level_id: t.id, score: score, total: total, hint_used: !!state.hintUsed, record: isRecord });
     QuizShare.prepare(result);
 
     var bestLine = null;
@@ -599,7 +784,10 @@
       ]),
       h('div', { class: 'result__actions' }, [
         shareBtn,
-        h('button', { class: 'btn btn--light', type: 'button', 'data-action': 'again', onclick: function () { startTest(t); } }, ['🔄 Пройти ещё раз']),
+        h('button', { class: 'btn btn--light', type: 'button', 'data-action': 'again', onclick: function () {
+          AN.event('replay_clicked', { level_id: t.id, score: score });
+          startTest(t, 'again');
+        } }, ['🔄 Пройти ещё раз']),
         h('button', { class: 'btn btn--light', type: 'button', 'data-action': 'home', onclick: goHome }, ['📋 Другие тесты'])
       ])
     ]), 'result');
@@ -609,7 +797,13 @@
   function doShare(btn) {
     if (!state || !state.result || btn.disabled) return;
     btn.disabled = true;
-    QuizShare.share(state.result, { toast: toast }).then(null, function () {
+    var id = state.test.id;
+    QuizShare.share(state.result, {
+      toast: toast,
+      mark: function (ch) { AN.event('share_clicked', { channel: ch, level_id: id }); },
+      onOpen: updateBanner,
+      onClose: updateBanner
+    }).then(null, function () {
       toast('Не получилось поделиться. Попробуйте ещё раз.');
     }).then(function () { btn.disabled = false; });
   }
@@ -618,6 +812,7 @@
 
   document.addEventListener('keydown', function (e) {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (adBusy) return;   // ждём рекламу: клавиши слушает окно «Загружаем рекламу» (Esc — отмена)
     if (QuizShare.isDialogOpen && QuizShare.isDialogOpen()) return; // окно «Поделиться» само слушает клавиши
     var key = e.key;
     var activeKey = key === 'Enter' || key === ' ' || /^[0-9]$/.test(key);
@@ -660,15 +855,37 @@
 
   /* ---------- запуск ---------- */
 
+  // Какие ключи хранилища читаем при запуске (одним вызовом)
+  function storeKeys() {
+    var keys = ['sound'];
+    tests.forEach(function (t) { keys.push('best:' + t.id, 'recent:' + t.id); });
+    return keys;
+  }
+
+  // Ссылка из площадки: во ВК всё после # в адресе приложения приходит как payload («test=ussr»)
+  function testFromPayload() {
+    var pl = PF && PF.payload;
+    if (typeof pl !== 'string') return null;
+    var m = pl.replace(/^[#?]/, '').match(/^(?:test=)?([a-z0-9_-]{1,40})$/i);
+    return m && tests.filter(function (x) { return x.id === m[1]; })[0] || null;
+  }
+
   function boot() {
     if (!tests.length) {
       app.appendChild(h('p', { class: 'noscript', text: 'Тесты не найдены.' }));
       return;
     }
     var t = testFromUrl();
+    if (!t) {
+      t = testFromPayload();
+      if (t) { try { history.replaceState(null, '', urlWithTest(t.id)); } catch (e) { /* ничего */ } }
+    }
+    var returning = tests.some(function (x) { return bestOf(x) != null; });
+    AN.event('app_opened', { entry: t ? 'test' : 'home', returning: returning });
     if (t) {
       // Пришли по ссылке ?test=…: под заставкой кладём главный экран,
       // чтобы «назад» вёл к списку тестов, а не прочь из приложения.
+      introSource = 'link';
       if (!(history.state && history.state.quiz === t.id)) { replaceHome(); pushTest(t); }
       showIntro(t);
     } else {
@@ -677,7 +894,22 @@
     }
   }
 
-  // Для проверочного скрипта tools/check.js (ничего не меняет в работе приложения).
+  function start() {
+    AN.init(PF && PF.hasBridge ? PF.bridge : null, { appVersion: CFG.version || '' });
+    if (PF && PF.onPause) PF.onPause(function (paused) {
+      if (paused) interruptMemorize(); else resumeAfterAd();
+    });
+    window.addEventListener('pagehide', function () { noteAbandon('exit'); });
+    QuizStore.init(storeKeys()).then(null, function () { /* без сохранённого */ }).then(function () {
+      boot();
+      appReady = true;
+      updateBanner();
+      if (PF && PF.gameReady) PF.gameReady();
+      AN.ready();
+    });
+  }
+
+  // Для проверочных скриптов tools/check.js и tools/check-platform.js (ничего не меняет в работе приложения).
   window.QuizApp = {
     tests: tests,
     screen: function () { return screen; },
@@ -685,8 +917,11 @@
     prepareQuestions: prepareQuestions,
     runLength: runLength,
     levelOf: levelOf,
-    order: TEST_ORDER.slice()
+    order: TEST_ORDER.slice(),
+    isReady: function () { return appReady; },
+    adGrants: function () { return adGrants; },
+    adBusy: function () { return adBusy; }
   };
 
-  boot();
+  start();
 })();

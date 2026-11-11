@@ -2,6 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
+<script src="playgama-bridge.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Викторины — проверь себя!</title>
 <meta name="description" content="Весёлые викторины: СССР, песни, кино, актёры, мультфильмы, Новый год, природа и тест на память. 10 вопросов, звание по результату — поделитесь с друзьями!">
@@ -42,10 +43,32 @@
 <script src="tests/nature.js"></script>
 <script src="tests/memory.js"></script>
 
-<!-- Движок -->
-<script src="js/storage.js"></script>
-<script src="js/sound.js"></script>
-<script src="js/share.js"></script>
-<script src="js/app.js"></script>
+<!-- Площадка (общий шаблон студии, как в «Соннике»): настройки, Playgama Bridge, статистика -->
+<script src="config.js"></script>
+<script src="platform.js"></script>
+<script src="analytics.js"></script>
+<script>
+/* Запуск: сначала площадка (Playgama Bridge — ВК, ОК или обычный браузер), потом движок.
+   Bridge ждём не дольше 8 с, и всё вместе — не дольше 10 с от начала загрузки страницы. */
+(function () {
+  var files = ['js/storage.js', 'js/sound.js', 'js/share.js', 'js/app.js'];
+  function load(i) {
+    if (i >= files.length) return;
+    var s = document.createElement('script');
+    s.src = files[i];
+    s.onload = function () { load(i + 1); };
+    s.onerror = function () {
+      var a = document.getElementById('app');
+      if (a) a.innerHTML = '<p class="noscript">Не получилось загрузить викторины. Обновите страницу.</p>';
+    };
+    document.body.appendChild(s);
+  }
+  var started = false;
+  function go() { if (!started) { started = true; load(0); } }
+  setTimeout(go, Math.max(0, 10500 - (window.performance && performance.now ? performance.now() : 0)));
+  if (!window.Platform) { go(); return; }
+  window.Platform.init({ timeoutMs: 8000, deadlineMs: 10000, localPrefix: '' }).then(go, go);
+})();
+</script>
 </body>
 </html>

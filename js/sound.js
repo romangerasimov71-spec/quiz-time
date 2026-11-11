@@ -1,8 +1,11 @@
 /* Тихие звуки «верно» / «неверно» через WebAudio. Без файлов.
-   Состояние кнопки звука хранится в QuizStore ('sound' = 'on' | 'off'). */
+   Состояние кнопки звука хранится в QuizStore ('sound' = 'on' | 'off'), читается после
+   QuizStore.init(). Пока идёт реклама (площадка поставила паузу) — звука нет. */
 window.QuizSound = (function () {
   var ctx = null;
-  var enabled = QuizStore.get('sound') !== 'off';
+  var enabled = null;   // читаем из хранилища при первом обращении (после QuizStore.init)
+  function on() { if (enabled === null) enabled = QuizStore.get('sound') !== 'off'; return enabled; }
+  function quiet() { return !on() || (window.Platform && Platform.isPaused && Platform.isPaused()); }
 
   function audio() {
     if (!ctx) {
@@ -31,22 +34,22 @@ window.QuizSound = (function () {
   }
 
   return {
-    isOn: function () { return enabled; },
+    isOn: on,
     toggle: function () {
-      enabled = !enabled;
-      QuizStore.set('sound', enabled ? 'on' : 'off');
+      enabled = !on();
+      QuizStore.set('sound', enabled ? 'on' : 'off', true);
       if (enabled) tone(660, 0, 0.12, 'sine', 0.05);
       return enabled;
     },
     /* Вызывать по первому нажатию — браузеры разрешают звук только после жеста. */
-    unlock: function () { if (enabled) audio(); },
+    unlock: function () { if (on()) audio(); },
     correct: function () {
-      if (!enabled) return;
+      if (quiet()) return;
       tone(659, 0, 0.14, 'sine', 0.07);
       tone(988, 0.12, 0.22, 'sine', 0.07);
     },
     wrong: function () {
-      if (!enabled) return;
+      if (quiet()) return;
       tone(220, 0, 0.32, 'triangle', 0.09, 150);
     }
   };

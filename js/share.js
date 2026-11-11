@@ -1,18 +1,39 @@
 /* «Поделиться результатом».
    Всё идёт через одну функцию QuizShare.share(result).
-   Сейчас (прототип, без SDK): системное «Поделиться» телефона (Web Share с картинкой-файлом),
-   а если так нельзя — окно с самой картинкой (сохранить / скачать) и кнопкой
-   «Скопировать текст со ссылкой». Потом сюда встанет VK Bridge (VKWebAppShowWallPostBox)
-   и ОК — см. пометку в share().
+   - Во ВК и ОК (через Playgama Bridge, platform.js) и на компьютере — наше окно: первая
+     кнопка — «Поделиться ВКонтакте» / «в Одноклассниках» окном самой площадки (текст + ссылка;
+     картинку площадки принимают только загруженной на их сервер, а своего сервера у нас нет),
+     ссылка на другую сеть (если площадка разрешает ссылки наружу), картинка-карточка результата
+     (скачать / подержать палец), «Скопировать текст со ссылкой».
+   - На телефоне вне площадок — как в прототипе: системное «Поделиться» с картинкой-файлом,
+     а если так нельзя — то же окно.
+   Ссылка ведёт на заставку того же теста: вне площадок …/?test=<id>, во ВК/ОК (когда в config.js
+   вписан адрес приложения) …/app123#test=<id>.
 
    result = { test, score, total, rank: { title, text } } */
 window.QuizShare = (function () {
-  var APP_URL = 'https://romangerasimov71-spec.github.io/quiz-time/';
+  var CFG = window.APP_CONFIG || {};
+  var APP_URL = (CFG.APP_URL && CFG.APP_URL.web) || 'https://romangerasimov71-spec.github.io/quiz-time/';
   var SIZE = 1080;
   var FONT = "'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
   var EMOJI_FONT = "'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif";
 
-  function shareUrl(result) { return APP_URL + '?test=' + encodeURIComponent(result.test.id); }
+  function PF() { return window.Platform || null; }
+
+  // Адрес приложения: во ВК/ОК — из config.js (если вписан), иначе адрес вне площадок.
+  function baseUrl() {
+    var pf = PF();
+    return String(pf && pf.appUrl ? pf.appUrl() : APP_URL).split('#')[0];
+  }
+  function socialUrlSet() {
+    var pf = PF(), urls = CFG.APP_URL || {};
+    return !!(pf && ((pf.id === 'vk' && urls.vk) || (pf.id === 'ok' && urls.ok)));
+  }
+  function shareUrl(result) {
+    var id = encodeURIComponent(result.test.id);
+    if (socialUrlSet()) return baseUrl() + '#test=' + id;   // во ВК всё после # приходит в приложение
+    return baseUrl().split('?')[0] + '?test=' + id;
+  }
 
   function shareText(result) {
     return 'Мой результат в тесте «' + result.test.title + '»: ' + result.score + ' из ' +
@@ -113,7 +134,7 @@ window.QuizShare = (function () {
     ctx.fillText('А ты сколько наберёшь?', cx, 950);
     ctx.font = '500 34px ' + FONT;
     ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.fillText(APP_URL.replace(/^https:\/\//, '').replace(/\/$/, ''), cx, 1020);
+    ctx.fillText(baseUrl().split('?')[0].replace(/^https?:\/\//, '').replace(/\/$/, ''), cx, 1020);
 
     return c;
   }
@@ -152,6 +173,8 @@ window.QuizShare = (function () {
   }
 
   function copyText(text) {
+    var pf = PF();
+    if (pf && pf.isReal && pf.copyText) return pf.copyText(text);   // во ВК/ОК — буфер обмена площадки
     function legacy() {
       try {
         var ta = document.createElement('textarea');
@@ -169,6 +192,17 @@ window.QuizShare = (function () {
       }
     } catch (e) { /* ничего */ }
     return Promise.resolve(legacy());
+  }
+
+  /* Компьютер: главный указатель — мышь (точный и с наведением), или тача нет вовсе
+     (как в «Соннике»). Ноутбук с сенсорным экраном и мышью — тоже компьютер. */
+  function isDesktop() {
+    try {
+      var mm = window.matchMedia;
+      var mouse = !!(mm && mm('(pointer: fine)').matches && mm('(hover: hover)').matches);
+      var noTouch = typeof navigator.maxTouchPoints === 'number' ? navigator.maxTouchPoints === 0 : !('ontouchstart' in window);
+      return mouse || noTouch;
+    } catch (e) { return false; }
   }
 
   function isTouchDevice() {
@@ -190,6 +224,7 @@ window.QuizShare = (function () {
     document.removeEventListener('keydown', d.onKey, true);
     d.el.remove();
     setTimeout(function () { URL.revokeObjectURL(d.url); }, 1000);
+    if (d.onClose) { try { d.onClose(); } catch (e) { /* ничего */ } }
     if (d.returnFocus && d.returnFocus.isConnected) { try { d.returnFocus.focus({ preventScroll: true }); } catch (e) { /* ничего */ } }
   }
 
@@ -205,13 +240,37 @@ window.QuizShare = (function () {
     return e;
   }
 
-  function openDialog(blob, result, fullText, toast) {
+  function openDialog(blob, result, fullText, toast, mark, onClose) {
     closeDialog();
     var url = URL.createObjectURL(blob);
     var touch = isTouchDevice();
+    var pf = PF();
+    var native = pf && pf.nativeShareChannel ? pf.nativeShareChannel() : '';
+    var links = !pf || !pf.externalLinksAllowed || pf.externalLinksAllowed();
+    var link = shareUrl(result);
+    var bare = fullText.slice(0, fullText.length - link.length).replace(/\s*Пройди тест:\s*$/, '');
+    // Своя площадка — её окном «поделиться»; другая сеть — ссылкой, если площадка разрешает ссылки.
+    function netButton(ch, label, href) {
+      if (native === ch) {
+        return el('button', { class: 'btn btn--net btn--' + ch, type: 'button', 'data-action': 'share-' + ch,
+          text: ch === 'vk' ? 'Поделиться ВКонтакте' : 'Поделиться в Одноклассниках',
+          onclick: function () {
+            mark(ch);
+            pf.shareNative({ text: fullText, url: link }).then(null, function () { /* закрыли окно площадки — ничего */ });
+          } });
+      }
+      if (!links) return null;
+      return el('a', { class: 'btn btn--net btn--' + ch, href: href, target: '_blank', rel: 'noopener', 'data-action': 'share-' + ch,
+        text: label, onclick: function () { mark(ch); } });
+    }
+    var vkBtn = netButton('vk', 'ВКонтакте', 'https://vk.com/share.php?url=' + encodeURIComponent(link) + '&title=' + encodeURIComponent(bare));
+    var okBtn = netButton('ok', 'Одноклассники', 'https://connect.ok.ru/offer?url=' + encodeURIComponent(link) +
+      '&title=' + encodeURIComponent('Викторины: тест «' + result.test.title + '»') + '&description=' + encodeURIComponent(bare));
+    var nets = native === 'ok' ? [okBtn, vkBtn] : [vkBtn, okBtn];
     var textEl = el('p', { class: 'share-dialog__text', text: fullText });
     var copyBtn = el('button', { class: 'btn btn--ghost', type: 'button', 'data-action': 'copy', text: '📋 Скопировать текст со ссылкой',
       onclick: function () {
+        mark('copy');
         copyText(fullText).then(function (ok) {
           if (ok) toast('Текст со ссылкой скопирован — вставьте его в сообщение другу.');
           else {
@@ -222,17 +281,22 @@ window.QuizShare = (function () {
       } });
     var sendBtn = canShareText() ? el('button', { class: 'btn btn--ghost', type: 'button', 'data-action': 'send-link', text: '📤 Отправить ссылку',
       onclick: function () {
+        mark('system');
         try { navigator.share({ title: 'Викторины', text: fullText }).then(null, function () { /* передумал — ничего */ }); } catch (e) { /* ничего */ }
       } }) : null;
     var download = touch ? null : el('a', { class: 'btn btn--primary', href: url, download: 'viktoriny-' + result.test.id + '-' + result.score + '.' + CARD_EXT,
-      'data-action': 'download', text: '⬇ Скачать картинку' });
+      'data-action': 'download', text: '⬇ Скачать картинку', onclick: function () { mark('download'); } });
     var closeBtn = el('button', { class: 'share-dialog__close', type: 'button', 'data-action': 'close', 'aria-label': 'Закрыть', text: '✕', onclick: closeDialog });
+    var hint = touch ? 'Нажмите на картинку и подержите палец — телефон предложит сохранить её или отправить.'
+      : (native ? 'Если картинка не скачалась: нажмите на неё правой кнопкой мыши и выберите «Сохранить картинку как…».' : '');
 
     var box = el('div', { class: 'share-dialog__box', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Поделиться результатом' }, [
       closeBtn,
-      el('h2', { class: 'share-dialog__title', text: 'Ваша картинка с результатом' }),
+      el('h2', { class: 'share-dialog__title', text: 'Поделиться результатом' }),
+      nets[0] || nets[1] ? el('div', { class: 'share-dialog__nets' }, nets) : null,
+      el('p', { class: 'share-dialog__label', text: 'Картинка с результатом:' }),
       el('img', { class: 'share-dialog__img', src: url, alt: 'Тест «' + result.test.title + '»: ' + result.score + ' из ' + result.total + ' — «' + result.rank.title + '»' }),
-      touch ? el('p', { class: 'share-dialog__hint', text: 'Нажмите на картинку и подержите палец — телефон предложит сохранить её или отправить.' }) : null,
+      hint ? el('p', { class: 'share-dialog__hint', text: hint }) : null,
       download,
       el('p', { class: 'share-dialog__label', text: 'Текст для друзей:' }),
       textEl,
@@ -242,30 +306,41 @@ window.QuizShare = (function () {
     var wrap = el('div', { class: 'share-dialog', 'data-share-dialog': '', onclick: function (e) { if (e.target === wrap) closeDialog(); } }, [box]);
     var onKey = function (e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeDialog(); } };
     document.addEventListener('keydown', onKey, true);
-    dialog = { el: wrap, url: url, onKey: onKey, returnFocus: document.activeElement };
+    dialog = { el: wrap, url: url, onKey: onKey, returnFocus: document.activeElement, onClose: onClose };
     document.body.appendChild(wrap);
-    try { (download || copyBtn).focus({ preventScroll: true }); } catch (e) { /* ничего */ }
+    try { (nets[0] || nets[1] || download || copyBtn).focus({ preventScroll: true }); } catch (e) { /* ничего */ }
   }
 
   /* Главная функция. Возвращает Promise с одним из:
      'shared' — отправлено через системное «Поделиться», 'cancelled' — человек передумал,
      'dialog' — открыто окно с картинкой и текстом. opts.toast(text) — показать подсказку. */
+  /* opts.toast(text) — показать подсказку; opts.mark(channel) — отметка для статистики
+     ('system' | 'vk' | 'ok' | 'copy' | 'download'); opts.onOpen / opts.onClose — окно открыто / закрыто
+     (приложение прячет на это время баннер). */
   function share(result, opts) {
-    var toast = (opts && opts.toast) || function () {};
+    opts = opts || {};
+    var toast = opts.toast || function () {};
+    var mark = function (ch) { if (opts.mark) { try { opts.mark(ch); } catch (e) { /* ничего */ } } };
     var fullText = shareText(result);
     var blobPromise = (prepared && prepared.result === result) ? prepared.blob : cardBlob(result);
-
-    // === Здесь потом: ВК — VKWebAppShowWallPostBox, ОК — FAPI.UI.postMediatopic ===
+    var pf = PF();
+    var native = pf && pf.nativeShareChannel ? pf.nativeShareChannel() : '';
+    function dialogOpen(blob) {
+      openDialog(blob, result, fullText, toast, mark, opts.onClose);
+      if (opts.onOpen) { try { opts.onOpen(); } catch (e) { /* ничего */ } }
+      return 'dialog';
+    }
 
     return blobPromise.then(function (blob) {
       var file = null;
       try { if (blob) file = new File([blob], 'viktoriny-result.' + CARD_EXT, { type: CARD_TYPE }); } catch (e) { file = null; }
 
-      if (canShareFile(file)) {
+      // Телефон вне ВК/ОК — системное меню с картинкой; компьютер и ВК/ОК — наше окно.
+      if (!native && !isDesktop() && canShareFile(file)) {
+        mark('system');
         return navigator.share({ files: [file], title: 'Викторины', text: fullText }).then(function () { return 'shared'; }, function (err) {
           if (err && err.name === 'AbortError') return 'cancelled';
-          openDialog(blob, result, fullText, toast);
-          return 'dialog';
+          return dialogOpen(blob);
         });
       }
       if (!blob) { // совсем старый браузер: хотя бы текст
@@ -274,13 +349,12 @@ window.QuizShare = (function () {
           return 'text';
         });
       }
-      openDialog(blob, result, fullText, toast);
-      return 'dialog';
+      return dialogOpen(blob);
     });
   }
 
   return {
     share: share, prepare: prepare, makeCard: makeCard, shareText: shareText, shareUrl: shareUrl,
-    closeDialog: closeDialog, isDialogOpen: function () { return !!dialog; }, APP_URL: APP_URL
+    closeDialog: closeDialog, isDialogOpen: function () { return !!dialog; }, isDesktop: isDesktop, APP_URL: APP_URL
   };
 })();

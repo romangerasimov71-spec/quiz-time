@@ -20,7 +20,7 @@
 }
 
 * { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-padding-bottom: var(--banner-h, 0px); }
 body {
   margin: 0;
   min-height: 100vh;
@@ -41,7 +41,8 @@ button:disabled { cursor: default; }
 #app {
   max-width: 600px;
   margin: 0 auto;
-  padding: max(12px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  /* снизу — место под баннер площадки (--banner-h ставит platform.js, пока баннер на экране) */
+  padding: max(12px, env(safe-area-inset-top)) 16px calc(max(24px, env(safe-area-inset-bottom)) + var(--banner-h, 0px));
   min-height: 100vh;
   min-height: 100dvh;
 }
@@ -254,6 +255,49 @@ button:disabled { cursor: default; }
 .feedback__fact { margin-top: 8px; font-size: 20px; line-height: 1.4; }
 .feedback .next-btn { margin-top: 14px; }
 
+/* ---------- подсказка «50 на 50» за рекламу ---------- */
+.hint-btn { margin-top: 14px; min-height: 58px; font-size: 20px; border-style: dashed; border-color: #c9a77c; }
+.hint-btn__icon {
+  flex: none;
+  display: grid; place-items: center;
+  width: 34px; height: 34px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 20px; font-weight: 900; line-height: 1;
+}
+.hint-note { margin: 12px 2px 0; font-size: 18px; font-weight: 700; color: var(--ink-soft); text-align: center; }
+/* убранный подсказкой вариант: пустое место той же формы (кнопки не прыгают) */
+.answer.is-out { background: transparent; border-style: dashed; border-color: rgba(0, 0, 0, 0.12); box-shadow: none; }
+.answer.is-out .answer__text, .answer.is-out .answer__key { visibility: hidden; }
+
+/* ---------- окно «Загружаем рекламу…» ---------- */
+.ad-wait {
+  position: fixed; inset: 0;
+  z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  background: rgba(30, 20, 10, 0.6);
+}
+.ad-wait__box {
+  width: 100%; max-width: 360px;
+  padding: 22px 18px 18px;
+  border-radius: 24px;
+  background: var(--card);
+  text-align: center;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+}
+.ad-wait__box p { margin: 12px 0 16px; font-size: 22px; font-weight: 800; }
+.spinner {
+  width: 48px; height: 48px;
+  margin: 0 auto;
+  border-radius: 50%;
+  border: 5px solid var(--line);
+  border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 @keyframes pop { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
 
 /* ---------- «запомни» ---------- */
@@ -395,6 +439,10 @@ body.on-result, body.on-intro { background: linear-gradient(160deg, var(--c1), v
 .share-dialog__label { margin: 4px 0 -6px; font-size: 17px; font-weight: 700; color: var(--ink-soft); }
 .share-dialog__text { margin: 0; padding: 10px 12px; border: 2px dashed var(--line); border-radius: 14px; font-size: 18px; line-height: 1.4; overflow-wrap: anywhere; user-select: text; }
 .share-dialog .btn { min-height: 58px; font-size: 20px; text-decoration: none; }
+.share-dialog__nets { display: grid; gap: 10px; }
+.btn--net { color: #fff; box-shadow: 0 4px 0 rgba(0, 0, 0, 0.18); }
+.btn--vk { background: #0060d0; }   /* белый текст 5,5:1 */
+.btn--ok { background: #b35400; }   /* белый текст 4,9:1 */
 .share-dialog__close {
   position: absolute; top: 10px; right: 10px;
   width: 48px; height: 48px;
@@ -407,7 +455,7 @@ body.on-result, body.on-intro { background: linear-gradient(160deg, var(--c1), v
 .toast {
   position: fixed;
   left: 50%;
-  bottom: max(20px, env(safe-area-inset-bottom));
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + var(--banner-h, 0px));
   transform: translate(-50%, 20px);
   width: calc(100% - 32px);
   max-width: 520px;
@@ -471,7 +519,7 @@ body.on-result, body.on-intro { background: linear-gradient(160deg, var(--c1), v
   /* «Запомни» в альбоме: картинка слева (размер по высоте экрана), таймер и «Готово» справа */
   .memorize { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto auto 1fr; gap: 0 20px; align-items: start; text-align: left; }
   .memorize .mem-grid {
-    --cell: min(84px, calc((100vh - 150px - (var(--rows) - 1) * 8px) / var(--rows)), calc((55vw - (var(--cols) - 1) * 8px) / var(--cols)));
+    --cell: min(84px, calc((100vh - 150px - var(--banner-h, 0px) - (var(--rows) - 1) * 8px) / var(--rows)), calc((55vw - (var(--cols) - 1) * 8px) / var(--cols)));
     grid-column: 1; grid-row: 1 / span 4;
     grid-template-columns: repeat(var(--cols), var(--cell));
     gap: 8px; max-width: none; margin: 0;

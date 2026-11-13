@@ -754,9 +754,12 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     ok(first === (ch === "vk" ? "Поделиться ВКонтакте" : "Поделиться в Одноклассниках"), ch + ": первая кнопка — «" + first + "»");
     await page.locator(".share-dialog__nets .btn").first().click(); await page.waitForTimeout(100);
     const sh = await page.evaluate(() => window.__sh);
-    ok(sh.length === 1 && /\?test=kino$/.test(sh[0].url) && /^Мой результат в тесте «Кино»: 7 из 10/.test(sh[0].text), ch + ": окно площадки получило текст и ссылку на тест: " + (sh[0] ? sh[0].url : ""));
+    ok(sh.length === 1 && sh[0].url === "" && /^Мой результат в тесте «Кино»: 7 из 10 — «.+»! А ты сколько наберёшь\?$/.test(sh[0].text),
+      ch + ": адрес " + ch + " в config.js не вписан — окно площадки получило только текст, без ссылки (" + (sh[0] ? JSON.stringify(sh[0]) : "") + ")");
+    const dlgText = await page.evaluate(() => document.querySelector("[data-share-dialog]").innerText + " " + [...document.querySelectorAll("[data-share-dialog] a[href]")].map((a) => a.href).join(" "));
+    ok(!/github|https?:|Пройди тест:/.test(dlgText) && /Скопировать текст$/m.test(dlgText), ch + ": в окне нет github.io и ссылок, кнопка «Скопировать текст» (без «со ссылкой»)");
     const other = await page.locator(ch === "vk" ? ".share-dialog__nets .btn--ok" : ".share-dialog__nets .btn--vk").count();
-    ok(ch === "vk" ? other === 1 : other === 0, ch + ": кнопка другой сети " + (ch === "vk" ? "есть (ссылки разрешены)" : "спрятана (ссылки наружу запрещены)"));
+    ok(other === 0, ch + ": кнопки другой сети нет (во ВК — ни слова про ОК, в ОК — про ВКонтакте)");
     ok(await page.locator(".share-dialog__img").count() === 1 && await page.locator(".share-dialog__hint").count() === 1, ch + ": картинка-карточка результата и подсказка, как её сохранить");
     ok((await events(page)).some((e) => e.name === "share_clicked" && e.data.channel === ch && e.data.level_id === "kino"), ch + ": отметка share_clicked channel=" + ch);
     await shot(page, "share-" + ch);
@@ -769,12 +772,16 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
       const r = { test: QuizApp.tests.find((t) => t.id === "kino"), score: 5, total: 10, rank: { title: "x", text: "y" } };
       APP_CONFIG.APP_URL.vk = "https://vk.com/app123"; Platform.id = "vk";
       const vk = QuizShare.shareUrl(r);
-      APP_CONFIG.APP_URL.vk = ""; const vkEmpty = QuizShare.shareUrl(r);
+      APP_CONFIG.APP_URL.vk = ""; const vkEmpty = QuizShare.shareUrl(r), vkText = QuizShare.shareText(r);
+      APP_CONFIG.APP_URL.ok = "https://ok.ru/game/456"; Platform.id = "ok"; const okUrl = QuizShare.shareUrl(r);
+      APP_CONFIG.APP_URL.ok = ""; const okEmpty = QuizShare.shareUrl(r), okText = QuizShare.shareText(r);
       Platform.id = "mock"; const web = QuizShare.shareUrl(r);
-      return { vk, vkEmpty, web };
+      return { vk, vkEmpty, vkText, okUrl, okEmpty, okText, web };
     });
     ok(urls.vk === "https://vk.com/app123#test=kino", "во ВК ссылка из config.js: " + urls.vk);
-    ok(urls.vkEmpty === "https://romangerasimov71-spec.github.io/quiz-time/?test=kino", "адрес ВК ещё не вписан — ссылка на GitHub Pages: " + urls.vkEmpty);
+    ok(urls.okUrl === "https://ok.ru/game/456#test=kino", "в ОК ссылка из config.js: " + urls.okUrl);
+    ok(urls.vkEmpty === "" && urls.okEmpty === "" && !/github|https?:|Пройди тест/.test(urls.vkText + urls.okText),
+      "адрес ВК/ОК ещё не вписан — внутри площадки ссылки нет вовсе (никакого github.io): «" + urls.okText + "»");
     ok(urls.web === "https://romangerasimov71-spec.github.io/quiz-time/?test=kino", "вне площадок: " + urls.web);
     await page.context().close();
     // ссылка из площадки приходит в Bridge как payload (во ВК — всё после # в адресе приложения;
@@ -807,6 +814,104 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     await page.click(".share-dialog__nets .btn--vk");
     ok((await events(page)).some((e) => e.name === "share_clicked" && e.data.channel === "vk"), "отметка share_clicked channel=vk");
     await page.context().close();
+  }
+
+  console.log("\nПоддержка «Помощь и вопросы — пишите нам» и заставка:");
+  const CFG_FILE = (() => { const w = {}; require("vm").runInNewContext(fs.readFileSync(path.join(ROOT, "config.js"), "utf8"), { window: w }); return w.APP_CONFIG; })();
+  ok(CFG_FILE.SUPPORT && /^https:\/\/vk\.com\//.test(CFG_FILE.SUPPORT.vk) && /^https:\/\/ok\.ru\//.test(CFG_FILE.SUPPORT.ok) && /^https:\/\/vk\.com\//.test(CFG_FILE.SUPPORT.web),
+    "config.js SUPPORT: vk — vk.com, ok — ok.ru, web — vk.com " + JSON.stringify(CFG_FILE.SUPPORT));
+  for (const vp of [PHONE, { width: 360, height: 640 }, { width: 844, height: 390 }, { width: 1280, height: 800 }]) {
+    const page = await open(browser, BASE, vp, { init: () => { window.open = (u, t) => { window.__opened = (window.__opened || []).concat([u + " " + t]); return {}; }; } });
+    const label = vp.width + "×" + vp.height;
+    const gone = await page.waitForSelector("#splash", { state: "detached", timeout: 2000 }).then(() => true, () => false);
+    ok(gone, label + ": заставка «Загружаем…» убрана, когда главный экран готов");
+    const r = await page.evaluate(async () => {
+      const a = document.querySelector("main.home > .support-link:last-child");
+      if (!a) return null;
+      window.scrollTo(0, document.documentElement.scrollHeight); await new Promise((res) => setTimeout(res, 80));
+      const b = a.getBoundingClientRect(), ban = document.querySelector(".fake-banner");
+      const zone = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--banner-zone")) || 0;
+      return { text: a.innerText.replace(/\s+/g, " ").trim(), href: a.href, bottom: b.bottom, h: b.height, banTop: ban ? ban.getBoundingClientRect().top : null,
+        zoneTop: window.innerHeight - zone, font: parseFloat(getComputedStyle(a.querySelector(".support-link__title")).fontSize) };
+    });
+    ok(r && /Помощь и вопросы — пишите нам/.test(r.text) && !/vk\.com|ok\.ru|github|https?:/.test(r.text), label + ": внизу главного — строка «" + (r && r.text) + "» (адрес на экране не пишем)");
+    ok(r && r.href === CFG_FILE.SUPPORT.web && r.h >= 56 && r.font >= 19, label + ": ведёт на " + (r && r.href) + ", крупно (высота " + (r && Math.round(r.h)) + ", шрифт " + (r && r.font) + ")");
+    ok(r && r.banTop != null && r.bottom <= r.banTop + 0.5 && r.bottom <= r.zoneTop + 0.5, label + ": строка поддержки над баннером (" + (r && Math.round(r.bottom)) + " ≤ " + (r && Math.round(r.banTop)) + ")");
+    if (vp === PHONE) {
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await tap(page, ".support-link"); await page.waitForTimeout(100);
+      const opened = await page.evaluate(() => window.__opened || []);
+      ok(opened.length === 1 && opened[0] === CFG_FILE.SUPPORT.web + " _blank", "нажатие открывает сообщество в новом окне: " + JSON.stringify(opened));
+      ok((await events(page)).some((e) => e.name === "support_clicked" && e.data.where === "web"), "отметка support_clicked where=web");
+      ok(await page.locator(".support-link").count() === 1 && (await page.evaluate(() => QuizApp.screen())) === "home", "приложение осталось на главном");
+    }
+    ok(!page._errors.length, label + ": ошибок в консоли нет " + JSON.stringify(page._errors));
+    await page.context().close();
+  }
+  {
+    // Заставка видна, пока грузится площадка (движок задержан на 1,5 с)
+    const ctx = await browser.newContext({ viewport: PHONE, locale: "ru-RU" });
+    const page = await ctx.newPage();
+    await page.route("**/js/app.js", async (r) => { await new Promise((res) => setTimeout(res, 1500)); r.continue(); });
+    await page.goto(BASE, { waitUntil: "domcontentloaded" }); await page.waitForTimeout(300);
+    const sp = await page.evaluate(() => { const e = document.getElementById("splash"); if (!e) return null; const b = e.getBoundingClientRect(); return { text: e.innerText.replace(/\s+/g, " ").trim(), full: b.width >= innerWidth && b.height >= innerHeight, imgs: e.querySelectorAll("img").length }; });
+    ok(sp && /Викторины/.test(sp.text) && /Загружаем/.test(sp.text) && sp.full && !sp.imgs, "пока грузится — заставка на весь экран «" + (sp && sp.text) + "», без картинок");
+    await readyApp(page);
+    const gone = await page.waitForSelector("#splash", { state: "detached", timeout: 2000 }).then(() => true, () => false);
+    ok(gone && await page.locator(".test-card").count() > 0, "…и исчезает, когда главный экран готов");
+    await ctx.close();
+  }
+  {
+    // Bridge 2.4.1: логотип Playgama на весь экран выключен
+    const bc = JSON.parse(fs.readFileSync(path.join(ROOT, "playgama-bridge-config.json"), "utf8"));
+    ok(bc.disableLoadingLogo === true, "playgama-bridge-config.json: disableLoadingLogo = true (нет логотипа «BRIDGE playgama»)");
+  }
+  // Запуск по-настоящему: площадку узнаём по параметрам адреса (Bridge 2.4.1 в ОК отвечает 'vk'), как в «Сонника».
+  // fake — VK Bridge с unpkg подменён (Bridge поднимается), blocked — unpkg недоступен (Bridge не поднимается).
+  const FAKE_VKB = "window.vkBridge={send:function(m,p){window.__vkb=(window.__vkb||[]).concat([{m:m,p:p}]);" +
+    "if(m==='VKWebAppStorageGet')return Promise.resolve({keys:(p.keys||[]).map(function(k){return {key:k,value:''}})});" +
+    "if(m==='VKWebAppGetUserInfo')return Promise.resolve({id:1});return Promise.resolve({result:true});}," +
+    "subscribe:function(){},supports:function(){return true},isWebView:function(){return false}};";
+  for (const [where, query] of [["ok", "?vk_app_id=54891122&vk_client=ok&vk_platform=mobile_web_ok&vk_language=ru"],
+    ["ok", "?logged_user_id=1&application_key=X&api_server=https%3A%2F%2Fapi.ok.ru%2F&session_key=s"],
+    ["vk", "?vk_app_id=54891122&vk_platform=mobile_android&vk_language=ru"]]) {
+    for (const net of ["fake", "blocked"]) {
+      const ctx = await browser.newContext({ viewport: PHONE, locale: "ru-RU" });
+      await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => net === "fake" && /^https:\/\/unpkg\.com\//.test(r.request().url())
+        ? r.fulfill({ contentType: "text/javascript", body: FAKE_VKB }) : r.abort());
+      await ctx.addInitScript(() => { window.open = (u, t) => { window.__opened = (window.__opened || []).concat([u + " " + t]); return {}; }; });
+      const page = await open(browser, BASE + query, null, { ctx });
+      const label = where + " (" + net + ", " + query.slice(1, 28) + "…)";
+      const s0 = await page.evaluate(() => ({ id: Platform.id, launch: Platform.launch, social: Platform.socialId(), sup: Platform.supportUrl(), url: Platform.appUrl(), links: Platform.externalLinksAllowed() }));
+      ok(s0.launch === where && s0.social === where && s0.id !== (where === "ok" ? "vk" : "ok"), label + ": площадка " + JSON.stringify(s0));
+      ok(s0.url === "" && !s0.links, label + ": адрес приложения не вписан — ссылки нет, ссылки наружу запрещены");
+      const href = await page.getAttribute(".support-link", "href");
+      ok(href === CFG_FILE.SUPPORT[where], label + ": «Помощь и вопросы» ведёт на " + href);
+      // Окно «Поделиться» (результат подставлен) — текст без ссылки и без github.io
+      await page.evaluate(() => {
+        const t = QuizApp.tests.find((x) => x.id === "kino");
+        QuizShare.share({ test: t, score: 7, total: 10, rank: t.ranks[2] }, { toast: () => {}, mark: () => {} });
+      });
+      await page.waitForSelector("[data-share-dialog]");
+      const all = await page.evaluate(() => document.body.innerHTML + " " + document.body.innerText + " " + [...document.querySelectorAll("a[href]")].map((a) => a.href).join(" "));
+      const shareTxt = await page.textContent(".share-dialog__text");
+      ok(!/github|https?:|Пройди тест/.test(shareTxt), label + ": текст «Поделиться» без ссылки и github.io: «" + shareTxt + "»");
+      if (where === "ok") ok(!/vk\.com|ВКонтакте|github\.io|connect\.ok/i.test(all), label + ": в ОК нигде в странице нет vk.com, «ВКонтакте», github.io");
+      else ok(!/ok\.ru|Одноклассник|github\.io/i.test(all), label + ": во ВК нигде нет ok.ru, «Одноклассники», github.io");
+      ok(await page.locator("[data-share-dialog] a[target=_blank]").count() === 0, label + ": в окне «Поделиться» нет ссылок наружу");
+      if (net === "fake" && await page.evaluate(() => Platform.nativeShareChannel())) {
+        await page.locator(".share-dialog__nets .btn").first().click(); await page.waitForTimeout(200);
+        const calls = await page.evaluate(() => (window.__vkb || []).filter((c) => c.m === "VKWebAppShare"));
+        ok(calls.length === 1 && !calls[0].p.link, label + ": VKWebAppShare без ссылки (площадка делится самим приложением) " + JSON.stringify(calls[0] && calls[0].p));
+      }
+      await page.keyboard.press("Escape"); await page.waitForTimeout(100);
+      await tap(page, ".support-link"); await page.waitForTimeout(100);
+      const opened = await page.evaluate(() => window.__opened || []);
+      ok(opened.length === 1 && opened[0] === CFG_FILE.SUPPORT[where] + " _blank", label + ": нажатие открывает " + JSON.stringify(opened));
+      ok((await events(page)).some((e) => e.name === "support_clicked" && e.data.where === where), label + ": отметка support_clicked where=" + where);
+      ok(page._errors.filter((e) => !/Failed to load resource|ERR_FAILED|unpkg|api\.ok\.ru/.test(e)).length === 0, label + ": ошибок нет " + JSON.stringify(page._errors.slice(0, 3)));
+      await ctx.close();
+    }
   }
 
   console.log("\nОтметки для статистики:");
@@ -848,7 +953,7 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
     ok(ps && need.every((k) => k in ps.data), "performance_sample со всеми полями гайда: " + (ps ? "кадров " + ps.data.frame_count + ", fps " + ps.data.fps_avg + ", версия " + ps.data.game_version : "нет"));
     ok(ev.every((x) => Object.values(x.data).every((v) => typeof v !== "string" || (v.length <= 40 && !/https?:|@/.test(v)))), "в отметках нет адресов, почты, длинных текстов");
     const allowed = ["app_opened", "first_input", "progression_started", "progression_completed", "progression_failed", "replay_clicked", "share_clicked", "hint_offered", "hint_clicked", "hint_granted", "ad_reward_failed", "performance_sample",
-      "daily_opened", "daily_completed", "favorites_offered", "favorites_clicked", "favorites_added"];
+      "daily_opened", "daily_completed", "favorites_offered", "favorites_clicked", "favorites_added", "support_clicked"];
     const names = [...new Set(ev.map((x) => x.name))].sort();
     ok(names.every((n) => allowed.includes(n)), "только события из docs/analytics.md: " + names.join(", "));
     ok(!ev.some((x) => /answer|question/.test(x.name)), "отметок на каждый ответ нет");

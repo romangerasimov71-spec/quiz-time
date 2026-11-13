@@ -546,6 +546,29 @@
     return row;
   }
 
+  /* ---------- «Помощь и вопросы — пишите нам» (поддержка, требование ВК и ОК) ---------- */
+  /* Внизу главного экрана (над зоной баннера — её держит отступ #app). Адрес — config.js SUPPORT по
+     площадке (Platform.supportUrl): во ВК — сообщество ВК, в ОК — группа ОК, вне площадок — ВК.
+     Сам адрес на экране не пишем (на скриншотах карточки не должно быть адресов). */
+  function supportRow() {
+    var url = PF && PF.supportUrl ? PF.supportUrl() : '';
+    if (!url) return null;
+    return h('a', { class: 'support-link', href: url, target: '_blank', rel: 'noopener', 'data-action': 'support',
+      onclick: function (e) {
+        e.preventDefault();
+        AN.event('support_clicked', { where: (PF && PF.socialId && PF.socialId()) || 'web' });
+        var opened = false;
+        try { opened = PF.openSupport(); } catch (err) { opened = false; }
+        if (!opened) toast('Напишите нам в сообществе «Уютные игры»: ' + url.replace(/^https?:\/\//, ''));
+      } }, [
+      h('span', { class: 'support-link__icon', 'aria-hidden': 'true', text: '💬' }),
+      h('span', { class: 'support-link__body' }, [
+        h('span', { class: 'support-link__title', text: 'Помощь и вопросы — пишите нам' }),
+        h('span', { class: 'support-link__sub', text: 'Сообщество «Уютные игры»' })
+      ])
+    ]);
+  }
+
   function showHome() {
     state = null;
     setTheme(HOME_COLOR);
@@ -583,7 +606,8 @@
       ]),
       dailyCard(),
       favOffer(),
-      h('div', { class: 'cards' }, cards)
+      h('div', { class: 'cards' }, cards),
+      supportRow()
     ]), 'home');
   }
 
@@ -1323,6 +1347,15 @@
     }
   }
 
+  // Заставка «Викторины / Загружаем…» из index.html: убираем, когда первый экран готов.
+  function hideSplash() {
+    var sp = document.getElementById('splash');
+    if (!sp) return;
+    sp.style.pointerEvents = 'none';
+    sp.classList.add('splash--hide');
+    setTimeout(function () { if (sp.parentNode) sp.parentNode.removeChild(sp); }, 300);
+  }
+
   function start() {
     AN.init(PF && PF.hasBridge ? PF.bridge : null, { appVersion: CFG.version || '' });
     if (PF && PF.onPause) PF.onPause(function (paused) {
@@ -1335,6 +1368,7 @@
     });
     QuizStore.init(storeKeys()).then(null, function () { /* без сохранённого */ }).then(function () {
       boot();
+      hideSplash();
       appReady = true;
       updateBanner();
       if (PF && PF.gameReady) PF.gameReady();

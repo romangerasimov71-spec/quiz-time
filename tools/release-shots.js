@@ -2,7 +2,9 @@
    Запуск (из корня репозитория):
      python3 -m http.server 8791 --bind 127.0.0.1 &
      NODE_PATH=/opt/node-tools/node_modules node tools/release-shots.js
-   Кладёт в release/vk/screens/. */
+   Кладёт в release/vk/screens/. На скриншотах — ни площадок, ни адресов: окно «Поделиться» не снимаем
+   (на нём кнопки «ВКонтакте»/«Одноклассники» и адрес приложения — правила ВК п. 4.2.6, ОК п. 2.2, 5.1).
+   Строка поддержки на главном — без адреса («Помощь и вопросы — пишите нам»). */
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -18,7 +20,8 @@ const settled = (p) => p.waitForSelector('#app[data-input="ready"]', { timeout: 
   const p = await ctx.newPage();
   const shot = (name) => p.screenshot({ path: path.join(OUT, name), clip: { x: 0, y: 0, width: 400, height: 800 } });
 
-  await p.goto(BASE); await p.waitForSelector(".daily-card"); await settled(p); await p.waitForTimeout(400);
+  await p.goto(BASE); await p.waitForSelector(".daily-card"); await settled(p);
+  await p.waitForSelector("#splash", { state: "detached" }); await p.waitForTimeout(400);
   await shot("1-glavnaya.png");
 
   // тест «СССР»: вопрос с кнопкой подсказки
@@ -42,16 +45,12 @@ const settled = (p) => p.waitForSelector('#app[data-input="ready"]', { timeout: 
       return wrong ? (good + 1) % texts.length : good;
     }, i === 3 || i === 7);
     await p.locator(".answer").nth(idx).click();
-    if (i === 4) { await p.waitForTimeout(500); await shot("tmp-otvet.png"); }
+    // 4-й скриншот — ответ с плашкой «А вы знали?» (верный ответ)
+    if (i === 4) { await p.waitForSelector(".feedback__fact"); await p.waitForTimeout(600); await shot("4-otvet.png"); }
     await p.waitForSelector('[data-action="next"]'); await settled(p); await p.waitForTimeout(600); await p.click('[data-action="next"]');
   }
   await p.waitForSelector(".result__card"); await settled(p); await p.waitForTimeout(800);
   await shot("3-rezultat.png");
-
-  // «Поделиться»
-  await p.click('[data-action="share"]'); await p.waitForSelector("[data-share-dialog]"); await p.waitForTimeout(800);
-  await shot("4-podelitsya.png");
-  await p.keyboard.press("Escape"); await p.waitForTimeout(300);
 
   // «Проверь память»
   await p.goto(BASE + "&test=memory"); await p.waitForSelector('[data-action="start"]'); await settled(p);

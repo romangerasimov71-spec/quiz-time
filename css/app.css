@@ -775,3 +775,16 @@ body.on-result, body.on-intro { background: linear-gradient(160deg, var(--c1), v
 @media (prefers-reduced-motion: reduce) {
   *:not(.timer__fill) { transition: none !important; animation-duration: 0.01ms !important; }
 }
+
+/* ---------- «Помощь и вопросы — пишите нам» (поддержка, внизу главного экрана) ---------- */
+.support-link {
+  display: flex; align-items: center; gap: 12px;
+  margin: 18px 0 4px; padding: 12px 16px; min-height: 64px;
+  border: 2px solid var(--line); border-radius: var(--radius);
+  background: var(--card); color: var(--ink); text-decoration: none;
+}
+.support-link:hover { border-color: #d9bf9a; }
+.support-link__icon { flex: none; font-size: 30px; line-height: 1; font-family: var(--emoji); }
+.support-link__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.support-link__title { font-size: 20px; font-weight: 800; line-height: 1.25; }
+.support-link__sub { font-size: 17px; color: var(--ink-soft); }

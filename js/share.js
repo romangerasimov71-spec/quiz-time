@@ -8,7 +8,9 @@
    - На телефоне вне площадок — как в прототипе: системное «Поделиться» с картинкой-файлом,
      а если так нельзя — то же окно.
    Ссылка ведёт на заставку того же теста: вне площадок …/?test=<id>, во ВК/ОК (когда в config.js
-   вписан адрес приложения) …/app123#test=<id>.
+   вписан адрес приложения) …/app123#test=<id>. Внутри ВК/ОК без вписанного адреса ссылки нет вовсе —
+   только текст результата (никакого github.io: в ОК ссылки наружу запрещены).
+   Во ВК — ни слова про Одноклассники, в ОК — про ВКонтакте: кнопка другой сети только вне площадок.
 
    result = { test, score, total, rank: { title, text } } */
 window.QuizShare = (function () {
@@ -20,24 +22,31 @@ window.QuizShare = (function () {
 
   function PF() { return window.Platform || null; }
 
-  // Адрес приложения: во ВК/ОК — из config.js (если вписан), иначе адрес вне площадок.
+  // Внутри какой соцсети: 'vk' / 'ok' или ''.
+  function social() {
+    var pf = PF();
+    return pf && pf.socialId ? pf.socialId() : '';
+  }
+  // Адрес приложения: во ВК/ОК — из config.js (не вписан — ''), вне площадок — адрес GitHub Pages.
   function baseUrl() {
     var pf = PF();
     return String(pf && pf.appUrl ? pf.appUrl() : APP_URL).split('#')[0];
   }
-  function socialUrlSet() {
-    var pf = PF(), urls = CFG.APP_URL || {};
-    return !!(pf && ((pf.id === 'vk' && urls.vk) || (pf.id === 'ok' && urls.ok)));
-  }
   function shareUrl(result) {
-    var id = encodeURIComponent(result.test.id);
-    if (socialUrlSet()) return baseUrl() + '#test=' + id;   // во ВК всё после # приходит в приложение
-    return baseUrl().split('?')[0] + '?test=' + id;
+    var id = encodeURIComponent(result.test.id), base = baseUrl();
+    if (!base) return '';                                     // во ВК/ОК адрес ещё не вписан — без ссылки
+    if (social()) return base + '#test=' + id;                // во ВК всё после # приходит в приложение
+    return base.split('?')[0] + '?test=' + id;
   }
 
-  function shareText(result) {
+  // Текст без ссылки (для заголовков ссылок «поделиться» и для площадки, когда адреса нет)
+  function bareText(result) {
     return 'Мой результат в тесте «' + result.test.title + '»: ' + result.score + ' из ' +
-      result.total + ' — «' + result.rank.title + '»! А ты сколько наберёшь? Пройди тест: ' + shareUrl(result);
+      result.total + ' — «' + result.rank.title + '»! А ты сколько наберёшь?';
+  }
+  function shareText(result) {
+    var link = shareUrl(result);
+    return bareText(result) + (link ? ' Пройди тест: ' + link : '');
   }
 
   function roundRect(ctx, x, y, w, h, r) {
@@ -134,7 +143,8 @@ window.QuizShare = (function () {
     ctx.fillText('А ты сколько наберёшь?', cx, 950);
     ctx.font = '500 34px ' + FONT;
     ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.fillText(baseUrl().split('?')[0].replace(/^https?:\/\//, '').replace(/\/$/, ''), cx, 1020);
+    var site = baseUrl().split('?')[0].replace(/^https?:\/\//, '').replace(/\/$/, '');
+    if (site) ctx.fillText(site, cx, 1020);                   // во ВК/ОК без адреса — без строки адреса
 
     return c;
   }
@@ -248,7 +258,8 @@ window.QuizShare = (function () {
     var native = pf && pf.nativeShareChannel ? pf.nativeShareChannel() : '';
     var links = !pf || !pf.externalLinksAllowed || pf.externalLinksAllowed();
     var link = shareUrl(result);
-    var bare = fullText.slice(0, fullText.length - link.length).replace(/\s*Пройди тест:\s*$/, '');
+    var bare = bareText(result);
+    var where = social();
     // Своя площадка — её окном «поделиться»; другая сеть — ссылкой, если площадка разрешает ссылки.
     function netButton(ch, label, href) {
       if (native === ch) {
@@ -263,23 +274,24 @@ window.QuizShare = (function () {
       return el('a', { class: 'btn btn--net btn--' + ch, href: href, target: '_blank', rel: 'noopener', 'data-action': 'share-' + ch,
         text: label, onclick: function () { mark(ch); } });
     }
-    var vkBtn = netButton('vk', 'ВКонтакте', 'https://vk.com/share.php?url=' + encodeURIComponent(link) + '&title=' + encodeURIComponent(bare));
-    var okBtn = netButton('ok', 'Одноклассники', 'https://connect.ok.ru/offer?url=' + encodeURIComponent(link) +
+    // Во ВК — ничего про Одноклассники, в ОК — ничего про ВКонтакте (правила ВК и ОК).
+    var vkBtn = where === 'ok' ? null : netButton('vk', 'ВКонтакте', 'https://vk.com/share.php?url=' + encodeURIComponent(link) + '&title=' + encodeURIComponent(bare));
+    var okBtn = where === 'vk' ? null : netButton('ok', 'Одноклассники', 'https://connect.ok.ru/offer?url=' + encodeURIComponent(link) +
       '&title=' + encodeURIComponent('Викторины: тест «' + result.test.title + '»') + '&description=' + encodeURIComponent(bare));
     var nets = native === 'ok' ? [okBtn, vkBtn] : [vkBtn, okBtn];
     var textEl = el('p', { class: 'share-dialog__text', text: fullText });
-    var copyBtn = el('button', { class: 'btn btn--ghost', type: 'button', 'data-action': 'copy', text: '📋 Скопировать текст со ссылкой',
+    var copyBtn = el('button', { class: 'btn btn--ghost', type: 'button', 'data-action': 'copy', text: link ? '📋 Скопировать текст со ссылкой' : '📋 Скопировать текст',
       onclick: function () {
         mark('copy');
         copyText(fullText).then(function (ok) {
-          if (ok) toast('Текст со ссылкой скопирован — вставьте его в сообщение другу.');
+          if (ok) toast(link ? 'Текст со ссылкой скопирован — вставьте его в сообщение другу.' : 'Текст скопирован — вставьте его в сообщение другу.');
           else {
             toast('Не получилось скопировать. Выделите текст над кнопкой и скопируйте вручную.');
             try { var r = document.createRange(); r.selectNodeContents(textEl); var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); } catch (e) { /* ничего */ }
           }
         });
       } });
-    var sendBtn = canShareText() ? el('button', { class: 'btn btn--ghost', type: 'button', 'data-action': 'send-link', text: '📤 Отправить ссылку',
+    var sendBtn = canShareText() ? el('button', { class: 'btn btn--ghost', type: 'button', 'data-action': 'send-link', text: link ? '📤 Отправить ссылку' : '📤 Отправить текст',
       onclick: function () {
         mark('system');
         try { navigator.share({ title: 'Викторины', text: fullText }).then(null, function () { /* передумал — ничего */ }); } catch (e) { /* ничего */ }
@@ -345,7 +357,7 @@ window.QuizShare = (function () {
       }
       if (!blob) { // совсем старый браузер: хотя бы текст
         return copyText(fullText).then(function (ok) {
-          toast(ok ? 'Текст со ссылкой скопирован — вставьте его в сообщение другу.' : 'Не получилось поделиться на этом устройстве.');
+          toast(ok ? 'Текст скопирован — вставьте его в сообщение другу.' : 'Не получилось поделиться на этом устройстве.');
           return 'text';
         });
       }

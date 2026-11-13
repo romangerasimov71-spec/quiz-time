@@ -2,6 +2,19 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
+<!-- Заставка, пока грузится площадка (Bridge): название и «Загружаем…» на фоне приложения, без картинок.
+     Убирает js/app.js, когда первый экран готов. -->
+<style>
+.splash { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  background: radial-gradient(circle at 20% 0%, #fffaf0 0, #fff4e3 45%, #ffe7c7 100%); color: #2f2217;
+  font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; text-align: center; transition: opacity .25s ease; }
+.splash__logo { width: 88px; height: 88px; border-radius: 24px; background: #bf360c; color: #fff; display: flex; align-items: center; justify-content: center;
+  font-size: 60px; font-weight: 900; box-shadow: 0 6px 0 rgba(0,0,0,.18); }
+.splash__title { margin: 0; font-size: 36px; font-weight: 900; letter-spacing: -0.5px; }
+.splash__text { margin: 0; font-size: 22px; color: #6d5a48; }
+.splash--hide { opacity: 0; }
+</style>
+<noscript><style>.splash { display: none; }</style></noscript>
 <script src="playgama-bridge.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Викторины — проверь себя!</title>
@@ -26,6 +39,7 @@
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
+<div id="splash" class="splash" role="status"><div class="splash__logo" aria-hidden="true">?</div><p class="splash__title">Викторины</p><p class="splash__text">Загружаем…</p></div>
 <div id="app" aria-live="polite"></div>
 <div id="toast" class="toast" role="status" hidden></div>
 <noscript><p class="noscript">Чтобы пройти викторину, включите JavaScript в браузере.</p></noscript>
@@ -58,7 +72,8 @@
     s.src = files[i];
     s.onload = function () { load(i + 1); };
     s.onerror = function () {
-      var a = document.getElementById('app');
+      var a = document.getElementById('app'), sp = document.getElementById('splash');
+      if (sp) sp.parentNode.removeChild(sp);
       if (a) a.innerHTML = '<p class="noscript">Не получилось загрузить викторины. Обновите страницу.</p>';
     };
     document.body.appendChild(s);

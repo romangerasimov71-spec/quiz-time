@@ -42,6 +42,7 @@
 | `favorites_offered` | показана строка «Добавить в избранное / на главный экран» (не чаще раза в 3 дня, только на площадке, с 3-го дня заходов, после пройденного теста) | `kind`: `favorites` (избранное ВК/ОК) / `home_screen` (ярлык на главный экран) |
 | `favorites_clicked` | нажато «Добавить» (открываем окно площадки) | `kind` |
 | `favorites_added` | площадка сказала «добавлено» | `kind` |
+| `support_clicked` | нажата строка «Помощь и вопросы — пишите нам» внизу главного | `where`: `vk` / `ok` (внутри площадки) / `web` (вне площадок) |
 | `performance_sample` | скорость, раз в ~30 с видимого времени (шлёт модуль) | все обязательные поля гайда (`target_fps` = 60, `window_ms`, `active_ms`, `frame_count`, `fps_avg`, `fps_p10`, `frame_time_p50/p95/p99/max_ms`, `frames_over_50/100/250/500/1000ms`, `game_version`) + `js_error_count`, `unhandled_rejection_count`, `long_task_*` (если браузер умеет) |
 
 Воронка подсказки: `hint_offered` → `hint_clicked` → `hint_granted` или `ad_reward_failed`.

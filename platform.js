@@ -39,6 +39,15 @@
  *   Platform.copyText(str)     — скопировать текст (Promise<true|false>).
  *   Platform.appUrl()          — адрес приложения в текущей площадке (из APP_CONFIG.APP_URL).
  *   Platform.payload           — данные из ссылки запуска (во ВК: всё после # в адресе).
+ *   Platform.launch            — 'ok' / 'vk' по параметрам запуска в адресе (или ''), даже без Bridge.
+ *                                Bridge 2.4.1 в Одноклассниках называет площадку 'vk', поэтому ОК
+ *                                узнаём сами: vk_client=ok, vk_platform=*_ok, параметры ОК
+ *                                (logged_user_id / application_key + api_server …) или переход с ok.ru
+ *                                (как в «Соннике»).
+ *   Platform.socialId()        — 'vk' / 'ok' — внутри ВК / ОК (по запуску или по Bridge), иначе ''.
+ *   Platform.supportUrl()      — адрес поддержки своей площадки (APP_CONFIG.SUPPORT.vk|ok|web) или ''.
+ *   Platform.openSupport()     — открыть поддержку в новом окне (true — открыли, false — не вышло:
+ *                                приложение показывает адрес текстом).
  *   Platform.isPaused() / onPause(fn) — площадка поставила паузу (реклама, свернули вкладку).
  *   Platform.favoritesKind()   — 'favorites' / 'home_screen', если площадка умеет добавить приложение
  *                                в избранное / на главный экран; '' — не умеет или это не площадка.
@@ -82,7 +91,26 @@
   }
   P.isTestHost = testHost;
 
+  // Где запущены — по параметрам запуска (не по Bridge: в ОК он отвечает 'vk'). Из «Сонника».
+  function launchPlatform() {
+    var q = safe(function () { return location.search; }, "") || "";
+    var has = function (name) { return new RegExp("[?&]" + name + "=").test(q); };
+    var ref = safe(function () { return String(document.referrer || ""); }, "");
+    var isOk = /[?&]vk_client=ok(&|$)/.test(q) || /[?&]vk_platform=[a-z_]+_ok(&|$)/.test(q) ||
+      ((has("logged_user_id") || has("application_key")) &&
+       (has("api_server") || has("apiconnection") || has("session_key") || has("auth_sig") || has("web_server"))) ||
+      /^https?:\/\/([a-z0-9-]+\.)*(ok\.ru|odnoklassniki\.ru)(\/|$)/i.test(ref);
+    if (isOk) return "ok";
+    if (/[?&]vk_(app_id|platform|user_id|language)=/.test(q)) return "vk";
+    return "";
+  }
+  P.launch = launchPlatform();
+
   /* ---------------- запуск ---------------- */
+
+  function removeBridgeOverlay() {
+    safe(function () { var ov = document.getElementById("loading-overlay"); if (ov) ov.remove(); });
+  }
 
   P.init = function (opts) {
     opts = opts || {};
@@ -96,7 +124,9 @@
     var started = new Promise(function (resolve) {
       if (!b || typeof b.initialize !== "function") { resolve(false); return; }
       var done = false;
-      var timer = setTimeout(function () { if (!done) { done = true; resolve(false); } }, timeoutMs);
+      // Bridge не ответил вовремя (во ВК/ОК — не загрузился VK Bridge с unpkg.com): работаем без него
+      // и убираем его заставку, если она есть, иначе она закрывает приложение и не пускает нажатия.
+      var timer = setTimeout(function () { if (!done) { done = true; removeBridgeOverlay(); resolve(false); } }, timeoutMs);
       var p;
       try { p = b.initialize(); } catch (e) { p = Promise.reject(e); }
       Promise.resolve(p).then(function () {
@@ -113,9 +143,12 @@
         P.bridge = b;
         P.hasBridge = true;
         P.id = String(safe(function () { return b.platform.id; }, "mock") || "mock");
+        P.bridgeId = P.id;
+        // В ОК Bridge работает через VK Bridge и называет площадку 'vk' — поправляем.
+        if (P.launch === "ok" && P.id === "vk") P.id = "ok";
       }
       P.isReal = P.hasBridge && P.id !== "mock";
-      P.isSocial = P.id === "vk" || P.id === "ok";
+      P.isSocial = P.id === "vk" || P.id === "ok" || !!P.launch;
       P.payload = P.hasBridge ? safe(function () { return b.platform.payload; }, null) : null;
       if (P.hasBridge) listen();
       banner.setup(opts);
@@ -444,33 +477,80 @@
 
   /* ---------------- поделиться, ссылки, буфер обмена ---------------- */
 
+  // Внутри какой соцсети мы: 'vk' / 'ok' (по параметрам запуска, а без них — по Bridge), иначе ''.
+  P.socialId = function () {
+    if (P.launch) return P.launch;
+    return P.id === "vk" || P.id === "ok" ? P.id : "";
+  };
+
+  // ОК внутри VK Bridge (Bridge называет площадку 'vk'): делимся через VKWebAppShare — в ОК он есть.
+  function okViaVkBridge() { return P.id === "ok" && P.bridgeId === "vk"; }
+
   P.nativeShareChannel = function () {
     if (!P.hasBridge) return "";
     if (P.id === "vk" && safe(function () { return bridge.social.isShareSupported; }, false)) return "vk";
+    if (okViaVkBridge() && safe(function () { return bridge.social.isShareSupported; }, false)) return "ok";
     if (P.id === "ok" && safe(function () { return bridge.social.isCreatePostSupported; }, false)) return "ok";
     return "";
   };
 
-  // ВК: окно «Поделиться» ВКонтакте (ссылка). ОК: окно новой заметки (текст + ссылка).
+  // ВК: окно «Поделиться» ВКонтакте (ссылка). ОК: окно «Поделиться» ОК (через VK Bridge) или окно
+  // новой заметки (текст + ссылка). Ссылки нет (адрес приложения не вписан) — площадка делится
+  // самим приложением (ВК) или только текстом (заметка ОК).
   P.shareNative = function (data) {
     var ch = P.nativeShareChannel();
+    var url = data.url || undefined;
     return Promise.resolve().then(function () {
-      if (ch === "vk") return bridge.social.share({ url: data.url });
-      if (ch === "ok") return bridge.social.createPost({ text: data.text, url: data.url });
+      if (ch === "vk" || (ch === "ok" && okViaVkBridge())) return bridge.social.share(url ? { url: url } : {});
+      if (ch === "ok") return bridge.social.createPost(url ? { text: data.text, url: url } : { text: data.text });
       throw new Error("share not supported");
     });
   };
 
+  // Внутри ВК и ОК ссылки на другие сайты не открываем никогда (правила ВК, ОК п. 5.1).
   P.externalLinksAllowed = function () {
+    if (P.socialId()) return false;
     if (!P.isReal) return true;
     return !!safe(function () { return bridge.platform.isExternalLinksAllowed; }, false);
   };
 
+  // Адрес приложения для ссылок «Поделиться». Внутри ВК/ОК — только свой адрес из config.js;
+  // не вписан — '' (ссылку не добавляем вовсе, никакого github.io). Вне площадок — web-адрес.
   P.appUrl = function () {
     var urls = cfg.APP_URL || {};
-    var u = (P.id === "vk" && urls.vk) || (P.id === "ok" && urls.ok) || urls.web || "";
-    if (u) return u;
+    var where = P.socialId();
+    if (where === "ok") return urls.ok || "";
+    if (where === "vk") return urls.vk || "";
+    if (urls.web) return urls.web;
     return location.href.split("#")[0].split("?")[0];
+  };
+
+  /* ---------------- поддержка ---------------- */
+
+  // Адрес поддержки своей площадки: во ВК — сообщество ВК, в ОК — группа ОК (никогда не ВК),
+  // вне площадок — web. Старый вид SUPPORT строкой понимается как адрес для всех площадок.
+  P.supportUrl = function () {
+    var sup = cfg.SUPPORT;
+    if (!sup) return "";
+    if (typeof sup === "string") return /^https?:/.test(sup) ? sup : "https://" + sup;
+    var where = P.socialId();
+    if (where) return sup[where] || "";
+    return sup.web || "";
+  };
+
+  // Открыть поддержку. Звать прямо из нажатия (иначе браузер не даст открыть окно).
+  // Как Bridge во ВК («вступить в сообщество» — тоже window.open): новое окно/вкладка; во ВК и ОК
+  // на телефоне площадка открывает его у себя. Не вышло — пробуем открыть во всём окне площадки
+  // (а не внутри нашей рамки: сайты ВК/ОК в рамке не открываются). Совсем нельзя — false.
+  P.openSupport = function () {
+    var url = P.supportUrl();
+    if (!url) return false;
+    var w = null;
+    try { w = window.open(url, "_blank"); } catch (e) { w = null; }
+    if (w) { try { w.opener = null; } catch (e) { /* ничего */ } return true; }
+    var inFrame = safe(function () { return window.top !== window.self; }, true);
+    if (!inFrame) { try { location.href = url; return true; } catch (e) { return false; } }
+    try { window.top.location.href = url; return true; } catch (e) { return false; }
   };
 
   function browserCopy(str) {

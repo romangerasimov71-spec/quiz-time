@@ -43,7 +43,7 @@ function snippetSvg() {
   <path d="M0 0H1120V150Q560 260 0 120z" fill="#fff" opacity=".06"/>
   <text x="70" y="235" font-family="${SANS}" font-weight="700" font-size="96" fill="#fff6d8">Викторины</text>
   <text x="76" y="310" font-family="${SANS}" font-size="40" fill="#ffe9c9">Узнайте, сколько вы помните</text>
-  <text x="76" y="372" font-family="${SANS}" font-size="30" fill="#ffd9b0">11 тестов  ·  50 вопросов в каждом</text>
+  <text x="76" y="372" font-family="${SANS}" font-size="30" fill="#ffd9b0">11 тестов  ·  больше 500 вопросов</text>
   <rect x="76" y="420" width="380" height="76" rx="38" fill="url(#gold)"/>
   <text x="266" y="470" text-anchor="middle" font-family="${SANS}" font-weight="700" font-size="32" fill="#4a1408">Пройти тест</text>
   <g transform="translate(780 90)">

@@ -18,6 +18,9 @@
   var PF = window.Platform || null;      // площадка (platform.js); без неё — работаем как в браузере
   var AN = window.Analytics || { init: function () {}, ready: function () {}, event: function () {}, once: function () {} };
   var HINTS_PER_RUN = CFG.HINTS_PER_RUN == null ? 1 : CFG.HINTS_PER_RUN;   // «50 на 50» за прохождение
+  // Android-приложение (RuStore, решение Романа 16 ноя): рекламы нет, «50 на 50» — бесплатно,
+  // но так же HINTS_PER_RUN (1) раз за прохождение теста.
+  var FREE_HINT = !!(PF && PF.isAndroid);
 
   var app = document.getElementById('app');
   var toastEl = document.getElementById('toast');
@@ -977,7 +980,13 @@
   };
 
   function hintAvailable() {
-    return !!(state && state.hintsLeft > 0 && PF && PF.rewardedAvailable && PF.rewardedAvailable());
+    return !!(state && state.hintsLeft > 0 && (FREE_HINT || (PF && PF.rewardedAvailable && PF.rewardedAvailable())));
+  }
+  // Android: подсказка без рекламы — сразу убираем два неверных (один раз за тест, как во ВК).
+  function useFreeHint() {
+    if (!state || state.phase !== 'ask' || state.answered || !hintAvailable() || inputLocked()) return;
+    AN.event('hint_clicked', { level_id: state.test.id, step_index: state.idx + 1 });
+    grantHint(state, false);
   }
 
   /* Где кнопка подсказки: на большом экране — под вариантами (крупная); на невысоком (≤ 700 px) —
@@ -998,8 +1007,10 @@
       AN.event('hint_offered', { level_id: state.test.id, step_index: state.idx + 1 });
     }
     return h('button', { class: 'btn btn--ghost ' + slotClass('hint-btn', slot), type: 'button', 'data-action': 'hint', 'data-slot': slot,
-      'aria-label': 'Подсказка «50 на 50» за просмотр рекламы', onclick: startHintAd }, [
+      'aria-label': FREE_HINT ? 'Подсказка «50 на 50»: убрать два неверных ответа' : 'Подсказка «50 на 50» за просмотр рекламы',
+      onclick: FREE_HINT ? useFreeHint : startHintAd }, [
       h('span', { class: 'hint-btn__icon', 'aria-hidden': 'true', text: '½' }),
+      FREE_HINT ? h('span', { class: 'hint-btn__text', text: '50 на 50' }) :
       // в верхней строке (альбом) места мало: «50 на 50» и под ним мелко «▶ реклама» — видно до нажатия
       slot === 'top'
         ? h('span', { class: 'hint-btn__label' }, [
@@ -1376,6 +1387,22 @@
     });
   }
 
+  /* Android: кнопка «Назад» и сворачивание. Обёртка android/ зовёт QuizApp.back(): true — шаг сделан
+     (закрыли окно «Поделиться» / «Выйти из теста?» = «Остаться», из теста — к списку, посреди теста —
+     вопрос «Выйти из теста?»), false — уже на главном, приложение закрывается.
+     QuizApp.appPause(true) — свернули: тишина (звук придержан), картинка «запомни» на паузе. */
+  function appBack() {
+    if (!appReady) return false;
+    if (window.QuizShare && QuizShare.isDialogOpen && QuizShare.isDialogOpen()) { QuizShare.closeDialog(); return true; }
+    if (exitDlg) { closeExit(); return true; }
+    if (screen !== 'home') { goHome(); return true; }
+    return false;
+  }
+  function appPause(p) {
+    if (window.QuizSound && QuizSound.hold) QuizSound.hold('app', !!p);
+    if (p) interruptMemorize(); else resumeAfterAd();
+  }
+
   // Для проверочных скриптов tools/check.js и tools/check-platform.js (ничего не меняет в работе приложения).
   window.QuizApp = {
     tests: tests,
@@ -1387,6 +1414,8 @@
     order: TEST_ORDER.slice(),
     isReady: function () { return appReady; },
     adGrants: function () { return adGrants; },
+    back: appBack,
+    appPause: appPause,
     adBusy: function () { return adBusy; },
     exitAsked: function () { return !!exitDlg; },
     dailyTest: dailyTest,

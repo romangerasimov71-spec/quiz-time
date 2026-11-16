@@ -11,6 +11,9 @@
    вписан адрес приложения) …/app123#test=<id>. Внутри ВК/ОК без вписанного адреса ссылки нет вовсе —
    только текст результата (никакого github.io: в ОК ссылки наружу запрещены).
    Во ВК — ни слова про Одноклассники, в ОК — про ВКонтакте: кнопка другой сети только вне площадок.
+   - Android-приложение (RuStore, Platform.isAndroid): системное меню Android «Поделиться» через мост
+     обёртки (Platform.appShareImage — картинка + текст, без моста картинки — только текст), без ссылки
+     (адреса в RuStore пока нет); моста нет вовсе — то же окно, без кнопок соцсетей.
 
    result = { test, score, total, rank: { title, text } } */
 window.QuizShare = (function () {
@@ -299,7 +302,10 @@ window.QuizShare = (function () {
     var download = touch ? null : el('a', { class: 'btn btn--primary', href: url, download: 'viktoriny-' + result.test.id + '-' + result.score + '.' + CARD_EXT,
       'data-action': 'download', text: '⬇ Скачать картинку', onclick: function () { mark('download'); } });
     var closeBtn = el('button', { class: 'share-dialog__close', type: 'button', 'data-action': 'close', 'aria-label': 'Закрыть', text: '✕', onclick: closeDialog });
-    var hint = touch ? 'Нажмите на картинку и подержите палец — телефон предложит сохранить её или отправить.'
+    var android = !!(pf && pf.isAndroid);
+    if (android) sendBtn = pf.appShareAvailable && pf.appShareAvailable() ? el('button', { class: 'btn btn--ghost', type: 'button', 'data-action': 'send-link', text: '📤 Отправить текст',
+      onclick: function () { mark('system'); pf.appShareText(fullText, 'Викторины'); } }) : null;
+    var hint = android ? '' : touch ? 'Нажмите на картинку и подержите палец — телефон предложит сохранить её или отправить.'
       : (native ? 'Если картинка не скачалась: нажмите на неё правой кнопкой мыши и выберите «Сохранить картинку как…».' : '');
 
     var box = el('div', { class: 'share-dialog__box', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Поделиться результатом' }, [
@@ -323,6 +329,18 @@ window.QuizShare = (function () {
     try { (nets[0] || nets[1] || download || copyBtn).focus({ preventScroll: true }); } catch (e) { /* ничего */ }
   }
 
+  function blobToDataUrl(blob) {
+    return new Promise(function (resolve) {
+      if (!blob || typeof FileReader !== 'function') { resolve(''); return; }
+      try {
+        var r = new FileReader();
+        r.onload = function () { resolve(String(r.result || '')); };
+        r.onerror = function () { resolve(''); };
+        r.readAsDataURL(blob);
+      } catch (e) { resolve(''); }
+    });
+  }
+
   /* Главная функция. Возвращает Promise с одним из:
      'shared' — отправлено через системное «Поделиться», 'cancelled' — человек передумал,
      'dialog' — открыто окно с картинкой и текстом. opts.toast(text) — показать подсказку. */
@@ -341,6 +359,21 @@ window.QuizShare = (function () {
       openDialog(blob, result, fullText, toast, mark, opts.onClose);
       if (opts.onOpen) { try { opts.onOpen(); } catch (e) { /* ничего */ } }
       return 'dialog';
+    }
+
+    // Android-приложение: системное меню телефона — картинка с текстом (или только текст).
+    if (pf && pf.isAndroid) {
+      return blobPromise.then(function (blob) {
+        return blobToDataUrl(blob).then(function (dataUrl) {
+          if (dataUrl && pf.appShareImage(dataUrl, 'viktoriny-result.' + CARD_EXT, fullText, 'Викторины')) { mark('system'); return 'shared'; }
+          if (pf.appShareText(fullText, 'Викторины')) { mark('system'); return 'shared'; }
+          if (blob) return dialogOpen(blob);
+          return copyText(fullText).then(function (ok) {
+            toast(ok ? 'Текст скопирован — вставьте его в сообщение другу.' : 'Не получилось поделиться на этом устройстве.');
+            return 'text';
+          });
+        });
+      });
     }
 
     return blobPromise.then(function (blob) {

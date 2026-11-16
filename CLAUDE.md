@@ -83,3 +83,34 @@ GitHub Pages публикуется с ветки `gh-pages` (копия `main`)
   статистика, тест дня, «Новинка», избранное, окна над баннером, поддержка, заставка, запуск в ВК/ОК, ~14 мин), набор рекламы студии `tools/ads-test/` + `tools/ads-adapter.js` (запуск — в
   адаптере). Нужен Playwright с Chromium: `NODE_PATH=/opt/node-tools/node_modules node tools/<файл>.js`.
 - Имитация рекламы на GitHub Pages: `?fakead=cancel|fail|silent|late`, `?fakeadsec=1`, `?nobanner`.
+
+## Android / RuStore (16 ноя 2026)
+- **Решение Романа 16 ноя:** в Android-версии рекламы нет, а то, что во ВК даётся за рекламу, — **бесплатно**:
+  подсказка «50 на 50» без рекламы, но так же **один раз за прохождение теста** (`HINTS_PER_RUN`), «Пройти ещё раз» — снова одна.
+- `android/` — приложение-обёртка: одна Activity с WebView, страница из assets по
+  `https://appassets.androidplatform.net/assets/www/index.html` (WebViewAssetLoader), всё остальное — 404, ссылки наружу
+  не открываются. Пакет `ru.german71.quiztime`, minSdk 24, targetSdk 35, **только портрет**, часы и системные кнопки видны
+  (фон под ними — #BF360C). Разрешений нет (даже INTERNET). versionName — `version` из `config.js`, versionCode — поле при
+  запуске сборки (каждая новая загрузка в RuStore +1).
+- Признак приложения — `QuizTimeAndroid/<версия>` в user agent (`Platform.isAndroid` в `platform.js`, id `android`):
+  Playgama Bridge не вызывается, это не ВК/ОК (`launch` и `socialId()` пустые), рекламы, баннера и зоны под него
+  (`--banner-zone` 0) нет, «в избранное» нет, строки «Помощь и вопросы» (vk.com / ok.ru) нет, `appUrl()` пустой — в тексте
+  «Поделиться» ссылки нет, на картинке-результате нет строки адреса. Сохранение — localStorage (те же ключи `quiz-time:…`).
+- «Поделиться результатом» в Android — системное меню телефона через мост обёртки `window.AppShare`
+  (MainActivity.ShareBridge, `Intent.ACTION_SEND`): картинка-результат JPEG (файл в `cache/share/`, отдаётся через
+  FileProvider, разрешений не нужно) + текст результата. Нет моста — наше окно (картинка, «Скопировать текст»), без соцсетей.
+- «Назад» Android — `QuizApp.back()`: закрыть окно «Поделиться»; в окне «Выйти из теста?» — «Остаться»; посреди теста —
+  спросить «Выйти из теста?»; с заставки/результата — к списку тестов; на главном — `false`, приложение закрывается.
+  Свернули — `QuizApp.appPause(true)`: звук придержан, картинка «запомни» на паузе; вернулись — продолжается.
+- Во ВК/ОК и на GitHub Pages признака нет — всё как было (контроль — в конце `tools/android-test.js`, плюс `tools/check-platform.js`).
+- Веб-сборка (то, что кладётся в APK): `tools/build-web.sh <папка>` — index.html, config/platform/analytics, Bridge,
+  css/, js/, tests/ (данные тестов), img/; без tools/, docs/, release/, android/.
+- Проверка режима приложения: `NODE_PATH=/opt/node-tools/node_modules node tools/android-test.js` (сама делает веб-сборку
+  и проверяет её на 127.0.0.1 с признаком в user agent).
+- **APK собирается не здесь**, а в `romangerasimov71-spec/ornament-sort` (там секреты подписи, ключ один на все игры студии):
+  Actions → «Android APK (other games)» → game = `quiz-time` (или `gh api -X POST
+  repos/romangerasimov71-spec/ornament-sort/actions/workflows/android-other.yml/dispatches -f ref=main -f 'inputs[game]=quiz-time'`).
+  Готовый APK — в ветке `rustore-build` репозитория `ornament-sort`: `apk/quiz-time-<версия>-release.apk`,
+  `build-info-quiz-time.txt`, `apk/SHA256.txt`.
+- Иконки: `python3 android/tools/make_icons.py` (из `release/vk/icons/icon-576.png`, заодно `release/rustore/icon-512.png`).
+  Карточка RuStore — `release/rustore/` (тексты `texts.md`, иконка 512, скриншоты 1080×1920 — `tools/capture-rustore.js`).

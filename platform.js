@@ -53,6 +53,14 @@
  *                                в избранное / на главный экран; '' — не умеет или это не площадка.
  *   Platform.addToFavorites()  — окно площадки «добавить» (Promise<true|false>: добавил / нет).
  *   CSS-переменная --banner-zone — место под баннер, пока он возможен (окна держатся выше неё).
+ *   Platform.isAndroid         — Android-приложение (RuStore): WebView дописывает «QuizTimeAndroid/<версия>»
+ *                                к user agent. Тогда Bridge не запускается (id = 'android'), рекламы и баннера
+ *                                нет (--banner-zone 0), ссылок наружу и поддержки нет, appUrl() = '' (в текстах
+ *                                «поделиться» ссылки нет), «в избранное» нет, сохранение — localStorage.
+ *                                Решение Романа 16 ноя: «50 на 50» — бесплатно, один раз за тест.
+ *   Platform.appShareText(text, title) / appShareImage(dataUrl, fileName, text, title) — системное меню
+ *                                Android «Поделиться» через мост обёртки (window.AppShare, Intent.ACTION_SEND;
+ *                                картинка — через FileProvider). true — меню открыто, false — моста нет.
  *
  * Без площадки реклама за награду и баннер — имитация: своё окно «здесь будет реклама»
  * с отсчётом и серая полоска внизу. Имитация включается ТОЛЬКО на проверочных адресах:
@@ -69,13 +77,18 @@
   var pauseHandlers = [];
   var LS_PREFIX = "";
 
+  // Android-приложение (RuStore): признак в user agent от обёртки android/ (MainActivity.UA_MARK).
+  var ANDROID = /\bQuizTimeAndroid\/([\w.-]+)/.exec(String((window.navigator && navigator.userAgent) || ""));
+
   var P = window.Platform = {
     id: "none",
     hasBridge: false,
     isReal: false,
     isSocial: false,
     payload: null,
-    bridge: null
+    bridge: null,
+    isAndroid: !!ANDROID,
+    androidVersion: ANDROID ? ANDROID[1] : ""
   };
 
   function now() { return Date.now(); }
@@ -93,6 +106,7 @@
 
   // Где запущены — по параметрам запуска (не по Bridge: в ОК он отвечает 'vk'). Из «Сонника».
   function launchPlatform() {
+    if (ANDROID) return "";
     var q = safe(function () { return location.search; }, "") || "";
     var has = function (name) { return new RegExp("[?&]" + name + "=").test(q); };
     var ref = safe(function () { return String(document.referrer || ""); }, "");
@@ -120,7 +134,8 @@
     // скрипт Bridge грузился долго, на initialize остаётся меньше времени.
     var since = (window.performance && performance.now) ? performance.now() : 0;
     timeoutMs = Math.max(500, Math.min(timeoutMs, (opts.deadlineMs || 10000) - since));
-    var b = window.bridge;
+    // Android-приложение: Bridge не трогаем вовсе (ни ВК, ни Playgama) — сразу «без площадки».
+    var b = P.isAndroid ? null : window.bridge;
     var started = new Promise(function (resolve) {
       if (!b || typeof b.initialize !== "function") { resolve(false); return; }
       var done = false;
@@ -147,6 +162,7 @@
         // В ОК Bridge работает через VK Bridge и называет площадку 'vk' — поправляем.
         if (P.launch === "ok" && P.id === "vk") P.id = "ok";
       }
+      if (P.isAndroid) P.id = "android";
       P.isReal = P.hasBridge && P.id !== "mock";
       P.isSocial = P.id === "vk" || P.id === "ok" || !!P.launch;
       P.payload = P.hasBridge ? safe(function () { return b.platform.payload; }, null) : null;
@@ -263,6 +279,7 @@
   var reqSeq = 0;
 
   function rewardedMode() {
+    if (P.isAndroid) return "none";
     if (P.hasBridge && safe(function () { return bridge.advertisement.isRewardedSupported; }, false)) return "bridge";
     return !P.isReal && testHost() ? "fake" : "none";
   }
@@ -407,7 +424,8 @@
     el: null,
     setup: function (opts) {
       this.reservePx = opts.bannerReservePx || cfg.BANNER_RESERVE_PX || 90;
-      if (P.hasBridge && safe(function () { return bridge.advertisement.isBannerSupported; }, false)) this.mode = "bridge";
+      if (P.isAndroid) this.mode = "none";
+      else if (P.hasBridge && safe(function () { return bridge.advertisement.isBannerSupported; }, false)) this.mode = "bridge";
       else if (!P.isReal && testHost() && (opts.fakeBanner != null ? opts.fakeBanner : cfg.FAKE_BANNER) && query("nobanner") == null) this.mode = "fake";
       else this.mode = "none";
       // --banner-zone: сколько места снизу может занять баннер, пока он вообще возможен (даже когда
@@ -509,6 +527,7 @@
 
   // Внутри ВК и ОК ссылки на другие сайты не открываем никогда (правила ВК, ОК п. 5.1).
   P.externalLinksAllowed = function () {
+    if (P.isAndroid) return false;
     if (P.socialId()) return false;
     if (!P.isReal) return true;
     return !!safe(function () { return bridge.platform.isExternalLinksAllowed; }, false);
@@ -518,6 +537,7 @@
   // не вписан — '' (ссылку не добавляем вовсе, никакого github.io). Вне площадок — web-адрес.
   P.appUrl = function () {
     var urls = cfg.APP_URL || {};
+    if (P.isAndroid) return "";   // адреса в RuStore пока нет — в текстах «поделиться» ссылки нет
     var where = P.socialId();
     if (where === "ok") return urls.ok || "";
     if (where === "vk") return urls.vk || "";
@@ -531,7 +551,7 @@
   // вне площадок — web. Старый вид SUPPORT строкой понимается как адрес для всех площадок.
   P.supportUrl = function () {
     var sup = cfg.SUPPORT;
-    if (!sup) return "";
+    if (!sup || P.isAndroid) return "";   // Android: строки поддержки (vk.com / ok.ru) нет
     if (typeof sup === "string") return /^https?:/.test(sup) ? sup : "https://" + sup;
     var where = P.socialId();
     if (where) return sup[where] || "";
@@ -551,6 +571,25 @@
     var inFrame = safe(function () { return window.top !== window.self; }, true);
     if (!inFrame) { try { location.href = url; return true; } catch (e) { return false; } }
     try { window.top.location.href = url; return true; } catch (e) { return false; }
+  };
+
+  /* ---------------- Android: системное меню «Поделиться» ---------------- */
+  // Мост из обёртки android/ (MainActivity.ShareBridge): shareText(title, text),
+  // shareImage(dataUrl, fileName, text, title) — Intent.ACTION_SEND, картинка через FileProvider.
+  function appBridge() {
+    var a = P.isAndroid ? window.AppShare : null;
+    return a && typeof a.shareText === "function" ? a : null;
+  }
+  P.appShareAvailable = function () { return !!appBridge(); };
+  P.appShareText = function (text, title) {
+    var a = appBridge();
+    if (!a) return false;
+    return safe(function () { return a.shareText(String(title || ""), String(text || "")) !== false; }, false);
+  };
+  P.appShareImage = function (dataUrl, fileName, text, title) {
+    var a = appBridge();
+    if (!a || typeof a.shareImage !== "function" || !/^data:image\/(png|jpeg);base64,/.test(String(dataUrl || ""))) return false;
+    return safe(function () { return a.shareImage(String(dataUrl), String(fileName || "image.jpg"), String(text || ""), String(title || "")) !== false; }, false);
   };
 
   function browserCopy(str) {

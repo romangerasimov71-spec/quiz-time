@@ -1,0 +1,66 @@
+plugins {
+    id 'com.android.application'
+}
+
+// versionName = version in config.js (one place to change, the same as in VK/OK)
+def cfgJs = file('../../config.js')
+def cfgVersion = (cfgJs.exists() ? (cfgJs.text =~ /version:\s*"([^"]+)"/) : null)
+def versionNameFromApp = (cfgVersion && cfgVersion.find()) ? cfgVersion.group(1) : '1.0.1'
+
+// release signing: the CI writes the keystore from the secrets and passes these properties (-P...)
+def ksFile = project.findProperty('ksFile')
+def ksPass = project.findProperty('ksPass')
+def ksAlias = project.findProperty('ksAlias')
+
+android {
+    namespace 'ru.german71.quiztime'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'ru.german71.quiztime'
+        minSdk 24
+        targetSdk 35
+        versionCode((project.findProperty('versionCode') ?: '1') as int)
+        versionName versionNameFromApp
+    }
+
+    signingConfigs {
+        if (ksFile) {
+            release {
+                storeFile file(ksFile)
+                storePassword ksPass
+                keyAlias ksAlias
+                keyPassword ksPass
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (ksFile) signingConfig signingConfigs.release
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // photos are already compressed: keep them as they are in the APK
+    androidResources {
+        noCompress 'jpg', 'jpeg', 'png', 'webp'
+    }
+}
+
+dependencies {
+    // androidx pulls kotlin-stdlib 1.8 and the old -jdk7/-jdk8 1.6 parts: one version for all (no duplicate classes)
+    implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
+    implementation 'androidx.webkit:webkit:1.12.1'
+    implementation 'androidx.activity:activity:1.9.3'
+    implementation 'androidx.core:core:1.13.1'
+}
